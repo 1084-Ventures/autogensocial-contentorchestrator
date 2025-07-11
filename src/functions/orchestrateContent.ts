@@ -2,6 +2,8 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
 import { cosmosClient } from "./shared/cosmosClient";
 import { generateContentFromPromptTemplate } from "./generateContent";
+import { generateImage } from "./generateImage";
+import { BlobServiceClient } from "@azure/storage-blob";
 import type { components } from "../../generated/models";
 type ContentOrchestratorRequest = components["schemas"]["ContentOrchestratorRequest"];
 type ContentGenerationTemplateDocument = components["schemas"]["ContentGenerationTemplateDocument"];
@@ -79,12 +81,46 @@ export async function orchestrateContent(
     }
 
     let generatedContent;
+    let imageUrl;
     try {
       generatedContent = await generateContentFromPromptTemplate(promptTemplate);
-      // Update post document with contentResponse and status
+
+      // If contentType is image, generate image and upload to blob storage
+      const contentItem = resource.templateSettings?.contentItem;
+      if (contentItem?.contentType === 'image' && generatedContent?.quote) {
+        // Generate image buffer
+        const imageBuffer = await generateImage({ contentItem, quote: generatedContent.quote });
+
+        // Query brands container for brand document to get userId
+        const brandsContainerId = process.env["COSMOS_DB_CONTAINER_BRAND"] || "brands";
+        const brandsContainer = cosmosClient.database(databaseId).container(brandsContainerId);
+        const querySpec = {
+          query: "SELECT * FROM c WHERE c.id = @brandId",
+          parameters: [{ name: "@brandId", value: brandId }]
+        };
+        const { resources: brandDocs } = await brandsContainer.items.query(querySpec).fetchAll();
+        const brandDoc = brandDocs[0];
+        const userId = brandDoc?.userId || 'unknownUser';
+
+        const blobConnectionString = process.env.PUBLIC_BLOB_CONNECTION_STRING;
+        if (!blobConnectionString) throw new Error('Missing PUBLIC_BLOB_CONNECTION_STRING');
+        const blobServiceClient = BlobServiceClient.fromConnectionString(blobConnectionString);
+        const containerName = 'images';
+        const containerClient = blobServiceClient.getContainerClient(containerName);
+        await containerClient.createIfNotExists();
+        const blobName = `${userId}/${brandId}/${postId}.png`;
+        const blockBlobClient = containerClient.getBlockBlobClient(blobName);
+        await blockBlobClient.uploadData(imageBuffer, {
+          blobHTTPHeaders: { blobContentType: 'image/png' }
+        });
+        imageUrl = blockBlobClient.url;
+      }
+
+      // Update post document with contentResponse, imageUrl (if any), and status
       await postsContainer.item(postId, brandId).replace({
         ...postDoc,
         contentResponse: generatedContent,
+        imageUrl,
         status: "posting",
         updatedAt: new Date().toISOString(),
       });
@@ -103,15 +139,13 @@ export async function orchestrateContent(
       };
     }
 
-    // (Placeholder) Here you would post to the platform, then update status to "posted" if successful
-    // await postsContainer.item(postId, brandId).replace({ ...postDoc, ... })
-
     return {
       status: 200,
       jsonBody: {
         postId,
         status: "posting",
-        contentResponse: generatedContent
+        contentResponse: generatedContent,
+        imageUrl
       }
     };
   } catch (err: any) {

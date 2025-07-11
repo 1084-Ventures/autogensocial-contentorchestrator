@@ -204,10 +204,23 @@ export interface components {
             backgroundColor?: string;
         };
         TextStyle: {
-            font?: components["schemas"]["Font"];
-            outline?: components["schemas"]["Outline"];
+            font?: {
+                family?: string;
+                size?: string;
+                /** @enum {string} */
+                weight?: "normal" | "bold";
+                /** @enum {string} */
+                style?: "normal" | "italic";
+                color?: string;
+            };
+            outline?: {
+                color?: string;
+                width?: number;
+            };
             /** @enum {string} */
             alignment?: "left" | "center" | "right";
+            /** @default 1 */
+            transparency: number;
         };
         OverlayBox: {
             color?: string;
@@ -216,10 +229,6 @@ export interface components {
             verticalLocation?: "top" | "middle" | "bottom";
             /** @enum {string} */
             horizontalLocation?: "left" | "middle" | "right";
-        };
-        Outline: {
-            color?: string;
-            width?: number;
         };
         /** @description Font definitions for use by both backend and frontend */
         Fonts: {
@@ -232,16 +241,6 @@ export interface components {
                 boldItalic?: string;
             };
         }[];
-        Font: {
-            family?: string;
-            size?: string;
-            /** @enum {string} */
-            weight?: "normal" | "bold";
-            /** @enum {string} */
-            style?: "normal" | "italic";
-        };
-        /** @enum {string} */
-        Alignment: "left" | "center" | "right";
         SocialAccountEntry: {
             platform?: components["schemas"]["Platform"];
             account?: components["schemas"]["SocialAccount"];
