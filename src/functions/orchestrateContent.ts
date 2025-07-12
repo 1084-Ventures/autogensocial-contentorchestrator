@@ -2,12 +2,19 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
 import { cosmosClient } from "./shared/cosmosClient";
 import { generateContentFromPromptTemplate } from "./generateContent";
+import { generateImage } from "./generateImage";
+import { BlobServiceClient } from "@azure/storage-blob";
+import { postContentToInstagram } from "./postContent";
 import type { components } from "../../generated/models";
 type ContentOrchestratorRequest = components["schemas"]["ContentOrchestratorRequest"];
 type ContentGenerationTemplateDocument = components["schemas"]["ContentGenerationTemplateDocument"];
 
+
+import { v4 as uuidv4 } from "uuid";
+
 const databaseId = process.env["COSMOS_DB_NAME"] || "cosmos-autogensocial-dev";
-const containerId = process.env["COSMOS_DB_CONTAINER_TEMPLATE"] || "templates";
+const templateContainerId = process.env["COSMOS_DB_CONTAINER_TEMPLATE"] || "templates";
+const postsContainerId = process.env["COSMOS_DB_CONTAINER_POSTS"] || "posts";
 
 
 export async function orchestrateContent(
@@ -30,9 +37,33 @@ export async function orchestrateContent(
       };
     }
 
-    context.log("Looking for template", { templateId, brandId, databaseId, containerId });
-    const container = cosmosClient.database(databaseId).container(containerId);
-    const { resource } = await container.item(templateId, brandId).read<ContentGenerationTemplateDocument>();
+
+    // 1. Create a new post document in the posts container
+    const postId = uuidv4();
+    const postsContainer = cosmosClient.database(databaseId).container(postsContainerId);
+    const postDoc = {
+      id: postId,
+      brandId,
+      templateId,
+      status: "generating_content",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    try {
+      await postsContainer.items.create(postDoc);
+      context.log("Created post document", { postId, brandId, templateId });
+    } catch (err) {
+      context.error("Failed to create post document", err);
+      return {
+        status: 500,
+        jsonBody: { message: "Failed to create post document." }
+      };
+    }
+
+    // 2. Look up the template
+    context.log("Looking for template", { templateId, brandId, databaseId, templateContainerId });
+    const templateContainer = cosmosClient.database(databaseId).container(templateContainerId);
+    const { resource } = await templateContainer.item(templateId, brandId).read<ContentGenerationTemplateDocument>();
 
     if (!resource) {
       return {
@@ -51,10 +82,72 @@ export async function orchestrateContent(
     }
 
     let generatedContent;
+    let imageUrl;
+    let postResult: { success: boolean; message: string } | undefined = undefined;
+    let brandDoc: any = undefined;
     try {
       generatedContent = await generateContentFromPromptTemplate(promptTemplate);
+
+      // If contentType is image, generate image and upload to blob storage
+      const contentItem = resource.templateSettings?.contentItem;
+      if (contentItem?.contentType === 'image' && generatedContent?.quote) {
+        // Generate image buffer
+        const imageBuffer = await generateImage({ contentItem, quote: generatedContent.quote });
+
+        // Query brands container for brand document to get userId
+        const brandsContainerId = process.env["COSMOS_DB_CONTAINER_BRAND"] || "brands";
+        const brandsContainer = cosmosClient.database(databaseId).container(brandsContainerId);
+        const querySpec = {
+          query: "SELECT * FROM c WHERE c.id = @brandId",
+          parameters: [{ name: "@brandId", value: brandId }]
+        };
+        const { resources: brandDocs } = await brandsContainer.items.query(querySpec).fetchAll();
+        brandDoc = brandDocs[0]; // full brand document, including userId, username, API keys, etc.
+        const userId = brandDoc?.userId || 'unknownUser';
+
+        const blobConnectionString = process.env.PUBLIC_BLOB_CONNECTION_STRING;
+        if (!blobConnectionString) throw new Error('Missing PUBLIC_BLOB_CONNECTION_STRING');
+        const blobServiceClient = BlobServiceClient.fromConnectionString(blobConnectionString);
+        const containerName = 'images';
+        const containerClient = blobServiceClient.getContainerClient(containerName);
+        await containerClient.createIfNotExists();
+        const blobName = `${userId}/${brandId}/${postId}.png`;
+        const blockBlobClient = containerClient.getBlockBlobClient(blobName);
+        await blockBlobClient.uploadData(imageBuffer, {
+          blobHTTPHeaders: { blobContentType: 'image/png' }
+        });
+        imageUrl = blockBlobClient.url;
+      }
+
+      // Post to Instagram if imageUrl and brandDoc are available
+      if (imageUrl && brandDoc) {
+        // Prepare post document for Instagram
+        const postForInstagram = {
+          imageUrl,
+          comment: generatedContent?.comment || '',
+          hashtags: generatedContent?.hashtags || [],
+        };
+        postResult = await postContentToInstagram(postForInstagram, brandDoc);
+      }
+
+      // Update post document with contentResponse, imageUrl (if any), status, and posting result
+      await postsContainer.item(postId, brandId).replace({
+        ...postDoc,
+        contentResponse: generatedContent,
+        imageUrl,
+        status: postResult?.success ? "posted" : "posting",
+        postResult,
+        updatedAt: new Date().toISOString(),
+      });
     } catch (err) {
       context.error("Error generating content:", err);
+      // Update post document with error status
+      await postsContainer.item(postId, brandId).replace({
+        ...postDoc,
+        status: "error",
+        error: err instanceof Error ? err.message : String(err),
+        updatedAt: new Date().toISOString(),
+      });
       return {
         status: 500,
         jsonBody: { message: `Failed to generate content: ${err instanceof Error ? err.message : String(err)}` }
@@ -63,7 +156,13 @@ export async function orchestrateContent(
 
     return {
       status: 200,
-      jsonBody: generatedContent
+      jsonBody: {
+        postId,
+        status: imageUrl ? (postResult?.success ? "posted" : "posting") : "generated",
+        contentResponse: generatedContent,
+        imageUrl,
+        postResult
+      }
     };
   } catch (err: any) {
     context.error("Error in orchestrateContent:", err);
@@ -76,7 +175,7 @@ export async function orchestrateContent(
 
 
 app.http("orchestrate-content", {
-  methods: ["GET", "POST"],
+  methods: ["POST"],
   authLevel: "function",
   handler: orchestrateContent
 });
