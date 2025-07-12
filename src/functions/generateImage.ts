@@ -1,6 +1,7 @@
 
 // Requires: npm install canvas
-import { createCanvas, loadImage, CanvasRenderingContext2D } from 'canvas';
+import { createCanvas, loadImage, CanvasRenderingContext2D, Image } from 'canvas';
+import { getContainerClient, downloadBlobToBuffer } from './shared/blobClient';
 import { components } from '../../generated/models';
 
 type ContentItem = components["schemas"]["ContentItem"];
@@ -68,66 +69,168 @@ export async function generateImage({ contentItem, quote }: GenerateImageOptions
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d');
 
+  // Randomly select a theme (VisualStyle) from visualStyleObj.themes
+  let selectedTheme = undefined;
+  if (visualStyleObj?.themes && Array.isArray(visualStyleObj.themes) && visualStyleObj.themes.length > 0) {
+    const idx = Math.floor(Math.random() * visualStyleObj.themes.length);
+    selectedTheme = visualStyleObj.themes[idx];
+  }
+
   // Draw background
-  if (mediaType === 'online' && setUrl) {
+  if (mediaType === 'uploaded' && setUrl) {
     try {
-      const img = await loadImage(setUrl);
-      ctx.drawImage(img, 0, 0, width, height);
+      let img: Image;
+      // Try to parse setUrl as Azure Blob Storage URL: https://<account>.blob.core.windows.net/<container>/<blob>
+      const azureBlobUrlPattern = /^https:\/\/([^.]+)\.blob\.core\.windows\.net\/([^\/]+)\/(.+)$/;
+      const match = setUrl.match(azureBlobUrlPattern);
+      if (match) {
+        const containerName = match[2];
+        const blobName = decodeURIComponent(match[3]);
+        const buffer = await downloadBlobToBuffer(containerName, blobName);
+        img = await loadImage(buffer);
+      } else {
+        // fallback to public URL
+        img = await loadImage(setUrl);
+      }
+      // Center-crop the image to fit the canvas without distortion
+      const imgAspect = img.width / img.height;
+      const canvasAspect = width / height;
+      let sx = 0, sy = 0, sWidth = img.width, sHeight = img.height;
+      if (imgAspect > canvasAspect) {
+        // Image is wider than canvas: crop sides
+        sWidth = img.height * canvasAspect;
+        sx = (img.width - sWidth) / 2;
+      } else if (imgAspect < canvasAspect) {
+        // Image is taller than canvas: crop top/bottom
+        sHeight = img.width / canvasAspect;
+        sy = (img.height - sHeight) / 2;
+      }
+      ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, width, height);
     } catch (e) {
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, width, height);
     }
-  } else if (mediaType === 'color' && visualStyleObj?.themes?.[0]?.backgroundColor) {
-    ctx.fillStyle = visualStyleObj.themes[0].backgroundColor;
+  } else if (mediaType === 'color' && selectedTheme?.backgroundColor) {
+    ctx.fillStyle = selectedTheme.backgroundColor;
     ctx.fillRect(0, 0, width, height);
   } else {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, width, height);
   }
 
-  // Overlay box (optional)
-  const overlay = visualStyleObj?.themes?.[0]?.overlayBox;
-  if (overlay) {
-    ctx.globalAlpha = overlay.transparency ?? 0.5;
-    ctx.fillStyle = overlay.color || '#000';
-    ctx.fillRect(0, 0, width, height);
-    ctx.globalAlpha = 1.0;
+  // Overlay box (optional, now sized to text with margin and alignment)
+  const overlay = selectedTheme?.overlayBox;
+  const textStyle = selectedTheme?.textStyle;
+  ctx.font = getFontString(textStyle);
+  ctx.textAlign = textStyle?.alignment || 'center';
+  ctx.textBaseline = 'middle';
+  ctx.globalAlpha = 1.0;
+
+  // Margins
+  const marginX = width * 0.05;
+  const marginY = height * 0.05;
+  const maxTextWidth = width * 0.9;
+  const lineHeight = parseInt((textStyle?.font?.size || '48').toString(), 10) * 1.2;
+
+  // Calculate wrapped text lines
+  const words = quote.split(' ');
+  let lines: string[] = [];
+  let line = '';
+  for (let n = 0; n < words.length; n++) {
+    const testLine = line + words[n] + ' ';
+    const metrics = ctx.measureText(testLine);
+    const testWidth = metrics.width;
+    if (testWidth > maxTextWidth && n > 0) {
+      lines.push(line.trim());
+      line = words[n] + ' ';
+    } else {
+      line = testLine;
+    }
+  }
+  lines.push(line.trim());
+
+  // Find the widest line
+  let textBoxWidth = 0;
+  lines.forEach(l => {
+    const w = ctx.measureText(l).width;
+    if (w > textBoxWidth) textBoxWidth = w;
+  });
+  textBoxWidth = Math.min(textBoxWidth, maxTextWidth);
+  const textBoxHeight = lines.length * lineHeight;
+
+  // Calculate text block anchor (x) so the block is visually centered or aligned as a block
+  let xBlock: number;
+  let yStart: number;
+  let blockAlign: CanvasTextAlign;
+  if (overlay?.horizontalLocation === 'left') {
+    xBlock = marginX;
+    blockAlign = 'left';
+  } else if (overlay?.horizontalLocation === 'right') {
+    xBlock = width - marginX;
+    blockAlign = 'right';
+  } else {
+    xBlock = width / 2;
+    blockAlign = 'center';
   }
 
-  // Text styling
-  const textStyle = visualStyleObj?.themes?.[0]?.textStyle;
+  // Vertical alignment for the block
+  if (overlay?.verticalLocation === 'top') {
+    yStart = marginY + lineHeight / 2;
+  } else if (overlay?.verticalLocation === 'bottom') {
+    yStart = height - marginY - textBoxHeight + lineHeight / 2;
+  } else {
+    yStart = height / 2 - textBoxHeight / 2 + lineHeight / 2;
+  }
+
+  // Draw overlay box sized to text
+  if (overlay) {
+    ctx.save();
+    ctx.globalAlpha = overlay.transparency ?? 0.5;
+    ctx.fillStyle = overlay.color || '#000';
+    let overlayX = xBlock;
+    if (blockAlign === 'left') {
+      overlayX = xBlock;
+    } else if (blockAlign === 'right') {
+      overlayX = xBlock - textBoxWidth;
+    } else {
+      overlayX = xBlock - textBoxWidth / 2;
+    }
+    ctx.fillRect(
+      overlayX - 16,
+      yStart - lineHeight / 2 - 8,
+      textBoxWidth + 32,
+      textBoxHeight + 16
+    );
+    ctx.globalAlpha = 1.0;
+    ctx.restore();
+  }
+
+
+  // Text styling (reuse variables above)
   ctx.font = getFontString(textStyle);
   ctx.fillStyle = textStyle?.font?.color || '#fff';
-  ctx.textAlign = textStyle?.alignment || 'center';
+  ctx.textAlign = blockAlign;
   ctx.textBaseline = 'middle';
   ctx.globalAlpha = textStyle?.transparency ?? 1;
 
   // Outline (optional)
   if (textStyle?.outline) {
-    ctx.strokeStyle = textStyle.outline.color || '#000';
-    ctx.lineWidth = textStyle.outline.width || 2;
-  }
-
-  // Calculate text position
-  const maxTextWidth = width * 0.8;
-  const lineHeight = parseInt((textStyle?.font?.size || '48').toString(), 10) * 1.2;
-  let x = width / 2;
-  let y = height / 2;
-  if (overlay?.verticalLocation === 'top') y = height * 0.25;
-  if (overlay?.verticalLocation === 'bottom') y = height * 0.75;
-
-  // Draw text (with optional outline)
-  if (textStyle?.outline) {
     ctx.save();
     ctx.lineJoin = 'round';
     ctx.strokeStyle = textStyle.outline.color || '#000';
     ctx.lineWidth = textStyle.outline.width || 2;
-    wrapText(ctx, quote, x, y, maxTextWidth, lineHeight);
+    // Draw each line with outline
+    lines.forEach((l, i) => {
+      ctx.strokeText(l, xBlock, yStart + i * lineHeight);
+    });
     ctx.restore();
   }
   ctx.save();
   ctx.fillStyle = textStyle?.font?.color || '#fff';
-  wrapText(ctx, quote, x, y, maxTextWidth, lineHeight);
+  // Draw each line
+  lines.forEach((l, i) => {
+    ctx.fillText(l, xBlock, yStart + i * lineHeight);
+  });
   ctx.restore();
 
   return canvas.toBuffer('image/png');

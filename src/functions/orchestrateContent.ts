@@ -4,6 +4,7 @@ import { cosmosClient } from "./shared/cosmosClient";
 import { generateContentFromPromptTemplate } from "./generateContent";
 import { generateImage } from "./generateImage";
 import { BlobServiceClient } from "@azure/storage-blob";
+import { postContentToInstagram } from "./postContent";
 import type { components } from "../../generated/models";
 type ContentOrchestratorRequest = components["schemas"]["ContentOrchestratorRequest"];
 type ContentGenerationTemplateDocument = components["schemas"]["ContentGenerationTemplateDocument"];
@@ -82,6 +83,8 @@ export async function orchestrateContent(
 
     let generatedContent;
     let imageUrl;
+    let postResult: { success: boolean; message: string } | undefined = undefined;
+    let brandDoc: any = undefined;
     try {
       generatedContent = await generateContentFromPromptTemplate(promptTemplate);
 
@@ -99,7 +102,7 @@ export async function orchestrateContent(
           parameters: [{ name: "@brandId", value: brandId }]
         };
         const { resources: brandDocs } = await brandsContainer.items.query(querySpec).fetchAll();
-        const brandDoc = brandDocs[0];
+        brandDoc = brandDocs[0]; // full brand document, including userId, username, API keys, etc.
         const userId = brandDoc?.userId || 'unknownUser';
 
         const blobConnectionString = process.env.PUBLIC_BLOB_CONNECTION_STRING;
@@ -116,12 +119,24 @@ export async function orchestrateContent(
         imageUrl = blockBlobClient.url;
       }
 
-      // Update post document with contentResponse, imageUrl (if any), and status
+      // Post to Instagram if imageUrl and brandDoc are available
+      if (imageUrl && brandDoc) {
+        // Prepare post document for Instagram
+        const postForInstagram = {
+          imageUrl,
+          comment: generatedContent?.comment || '',
+          hashtags: generatedContent?.hashtags || [],
+        };
+        postResult = await postContentToInstagram(postForInstagram, brandDoc);
+      }
+
+      // Update post document with contentResponse, imageUrl (if any), status, and posting result
       await postsContainer.item(postId, brandId).replace({
         ...postDoc,
         contentResponse: generatedContent,
         imageUrl,
-        status: "posting",
+        status: postResult?.success ? "posted" : "posting",
+        postResult,
         updatedAt: new Date().toISOString(),
       });
     } catch (err) {
@@ -143,9 +158,10 @@ export async function orchestrateContent(
       status: 200,
       jsonBody: {
         postId,
-        status: "posting",
+        status: imageUrl ? (postResult?.success ? "posted" : "posting") : "generated",
         contentResponse: generatedContent,
-        imageUrl
+        imageUrl,
+        postResult
       }
     };
   } catch (err: any) {
@@ -159,7 +175,7 @@ export async function orchestrateContent(
 
 
 app.http("orchestrate-content", {
-  methods: ["GET", "POST"],
+  methods: ["POST"],
   authLevel: "function",
   handler: orchestrateContent
 });
