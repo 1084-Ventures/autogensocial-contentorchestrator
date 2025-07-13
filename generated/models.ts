@@ -288,17 +288,6 @@ export interface components {
              */
             contentType: "video";
         });
-        MultiImageTemplate: {
-            /** @description Array of image objects */
-            imageTemplates?: components["schemas"]["ImageTemplate"][];
-            /** @description The exact number of images required */
-            numImages?: number;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            contentType: "multi-image";
-        };
         /** @enum {string} */
         MediaType: "color" | "set" | "uploaded" | "online";
         MediaMetadata: {
@@ -308,6 +297,17 @@ export interface components {
             suggestedName?: string;
             cognitiveData: components["schemas"]["CognitiveData"];
         };
+        ImagesTemplate: {
+            /** @description Array of image objects */
+            imageTemplates?: components["schemas"]["ImageTemplate"][];
+            /** @description The exact number of images required */
+            numImages?: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            contentType: "images";
+        };
         ImageTemplate: {
             mediaType?: components["schemas"]["MediaType"];
             setUrl?: string;
@@ -315,11 +315,6 @@ export interface components {
             aspectRatio?: components["schemas"]["AspectRatio"];
             /** @description Image file format (e.g., "jpeg", "png") */
             format?: string;
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            contentType: "image";
         };
         /**
          * @description Aspect ratio (e.g., "square", "portrait", "landscape", "story")
@@ -400,12 +395,11 @@ export interface components {
         };
         ContentItem: {
             /** @enum {string} */
-            contentType?: "text" | "image" | "multi-image" | "video";
+            contentType?: "text" | "images" | "video";
             text?: components["schemas"]["Text"];
-            imageTemplate?: components["schemas"]["ImageTemplate"];
             videoTemplate?: components["schemas"]["VideoTemplate"];
-            multiImageTemplate?: components["schemas"]["MultiImageTemplate"];
-        } & (components["schemas"]["Text"] | components["schemas"]["ImageTemplate"] | components["schemas"]["VideoTemplate"] | components["schemas"]["MultiImageTemplate"]);
+            imagesTemplate?: components["schemas"]["ImagesTemplate"];
+        } & (components["schemas"]["Text"] | components["schemas"]["VideoTemplate"] | components["schemas"]["ImagesTemplate"]);
         BrandInfo: {
             name?: string;
             description?: string;
