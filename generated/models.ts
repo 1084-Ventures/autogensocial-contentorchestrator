@@ -162,6 +162,11 @@ export interface components {
         };
         ContentGenerationTemplateDocument: components["schemas"]["BaseModel"] & {
             brandId?: string;
+            /**
+             * Format: date-time
+             * @description Last time the template was executed
+             */
+            lastExecutionTime?: string;
             templateInfo?: components["schemas"]["TemplateInfo"];
             schedule?: components["schemas"]["Schedule"];
             templateSettings?: components["schemas"]["TemplateSettings"];
