@@ -1,16 +1,16 @@
 
 // Requires: npm install canvas
 import { createCanvas, loadImage, CanvasRenderingContext2D, Image } from 'canvas';
-import { getContainerClient, downloadBlobToBuffer } from './shared/blobClient';
+import { downloadBlobToBuffer } from './shared/blobClient';
 import { components } from '../../generated/models';
 
-type ContentItem = components["schemas"]["ContentItem"];
+type ImageTemplate = components["schemas"]["ImageTemplate"];
 type VisualStyle = components["schemas"]["VisualStyle"];
 type TextStyle = components["schemas"]["TextStyle"];
 type AspectRatio = components["schemas"]["AspectRatio"];
 
 interface GenerateImageOptions {
-  contentItem: ContentItem;
+  imageTemplate: ImageTemplate;
   quote: string;
 }
 
@@ -56,15 +56,15 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, x: number, y: num
 }
 
 /**
- * Generates an image with a text overlay based on contentItem and quote.
+ * Generates an image with a text overlay based on a single imageTemplate and quote.
  * Returns a PNG buffer.
  */
-export async function generateImage({ contentItem, quote }: GenerateImageOptions): Promise<Buffer> {
-  if (!contentItem || contentItem.contentType !== 'image' || !contentItem.imageTemplate) {
-    throw new Error('Invalid contentItem for image generation');
+export async function generateImage({ imageTemplate, quote }: GenerateImageOptions): Promise<Buffer> {
+  if (!imageTemplate) {
+    throw new Error('Invalid imageTemplate for image generation');
   }
 
-  const { aspectRatio, mediaType, setUrl, visualStyleObj } = contentItem.imageTemplate;
+  const { aspectRatio, mediaType, setUrl, visualStyleObj } = imageTemplate;
   const { width, height } = getDimensions(aspectRatio);
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d');
@@ -204,7 +204,6 @@ export async function generateImage({ contentItem, quote }: GenerateImageOptions
     ctx.globalAlpha = 1.0;
     ctx.restore();
   }
-
 
   // Text styling (reuse variables above)
   ctx.font = getFontString(textStyle);

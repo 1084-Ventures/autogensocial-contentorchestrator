@@ -38,13 +38,27 @@ export async function orchestrateContent(
     }
 
 
-    // 1. Create a new post document in the posts container
+    // 1. Look up the template first
     const postId = uuidv4();
     const postsContainer = cosmosClient.database(databaseId).container(postsContainerId);
+    context.log("Looking for template", { templateId, brandId, databaseId, templateContainerId });
+    const templateContainer = cosmosClient.database(databaseId).container(templateContainerId);
+    const { resource } = await templateContainer.item(templateId, brandId).read<ContentGenerationTemplateDocument>();
+
+    if (!resource) {
+      return {
+        status: 404,
+        jsonBody: { message: "ContentGenerationTemplateDocument not found." }
+      };
+    }
+
+    // Now create the post document with socialAccounts from template
+    const socialAccounts = resource.templateInfo?.socialAccounts || [];
     const postDoc = {
       id: postId,
       brandId,
       templateId,
+      socialAccounts,
       status: "generating_content",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -60,18 +74,6 @@ export async function orchestrateContent(
       };
     }
 
-    // 2. Look up the template
-    context.log("Looking for template", { templateId, brandId, databaseId, templateContainerId });
-    const templateContainer = cosmosClient.database(databaseId).container(templateContainerId);
-    const { resource } = await templateContainer.item(templateId, brandId).read<ContentGenerationTemplateDocument>();
-
-    if (!resource) {
-      return {
-        status: 404,
-        jsonBody: { message: "ContentGenerationTemplateDocument not found." }
-      };
-    }
-
     // Call generateContentFromPromptTemplate if promptTemplate exists
     const promptTemplate = resource.templateSettings?.promptTemplate;
     if (!promptTemplate) {
@@ -82,18 +84,15 @@ export async function orchestrateContent(
     }
 
     let generatedContent;
-    let imageUrl;
+    let imageUrls: string[] = [];
     let postResult: { success: boolean; message: string } | undefined = undefined;
     let brandDoc: any = undefined;
     try {
       generatedContent = await generateContentFromPromptTemplate(promptTemplate);
 
-      // If contentType is image, generate image and upload to blob storage
+      // Multi-image support: generate and upload each image
       const contentItem = resource.templateSettings?.contentItem;
-      if (contentItem?.contentType === 'image' && generatedContent?.quote) {
-        // Generate image buffer
-        const imageBuffer = await generateImage({ contentItem, quote: generatedContent.quote });
-
+      if (contentItem?.contentType === 'images' && Array.isArray(generatedContent?.images)) {
         // Query brands container for brand document to get userId
         const brandsContainerId = process.env["COSMOS_DB_CONTAINER_BRAND"] || "brands";
         const brandsContainer = cosmosClient.database(databaseId).container(brandsContainerId);
@@ -102,7 +101,7 @@ export async function orchestrateContent(
           parameters: [{ name: "@brandId", value: brandId }]
         };
         const { resources: brandDocs } = await brandsContainer.items.query(querySpec).fetchAll();
-        brandDoc = brandDocs[0]; // full brand document, including userId, username, API keys, etc.
+        brandDoc = brandDocs[0];
         const userId = brandDoc?.userId || 'unknownUser';
 
         const blobConnectionString = process.env.PUBLIC_BLOB_CONNECTION_STRING;
@@ -111,37 +110,63 @@ export async function orchestrateContent(
         const containerName = 'images';
         const containerClient = blobServiceClient.getContainerClient(containerName);
         await containerClient.createIfNotExists();
-        const blobName = `${userId}/${brandId}/${postId}.png`;
-        const blockBlobClient = containerClient.getBlockBlobClient(blobName);
-        await blockBlobClient.uploadData(imageBuffer, {
-          blobHTTPHeaders: { blobContentType: 'image/png' }
-        });
-        imageUrl = blockBlobClient.url;
+
+        const imageTemplates = contentItem.imagesTemplate?.imageTemplates || [];
+        const maxImages = Math.min(generatedContent.images.length, imageTemplates.length, 20);
+        for (let i = 0; i < maxImages; i++) {
+          const quote = generatedContent.images[i]?.quote;
+          const imageTemplate = imageTemplates[i] || imageTemplates[0];
+          if (!quote || !imageTemplate) {
+            context.log('Skipping image with missing quote or imageTemplate', { index: i });
+            continue;
+          }
+          context.log('Generating image', { index: i, quote, imageTemplate });
+          const imageBuffer = await generateImage({ imageTemplate, quote });
+          const blobName = `${userId}/${brandId}/${postId}/${postId}-${i + 1}.png`;
+          const blockBlobClient = containerClient.getBlockBlobClient(blobName);
+          await blockBlobClient.uploadData(imageBuffer, {
+            blobHTTPHeaders: { blobContentType: 'image/png' }
+          });
+          imageUrls.push(blockBlobClient.url);
+          context.log('Uploaded image to blob storage', { index: i, blobUrl: blockBlobClient.url });
+        }
       }
 
-      // Post to Instagram if imageUrl and brandDoc are available
-      if (imageUrl && brandDoc) {
-        // Prepare post document for Instagram
-        const postForInstagram = {
-          imageUrl,
-          comment: generatedContent?.comment || '',
-          hashtags: generatedContent?.hashtags || [],
+      // Post to Instagram if images exist and brandDoc is available (supports both single and multi-image)
+      if (imageUrls.length > 0 && brandDoc) {
+        // Extract Instagram credentials from brandDoc.socialAccounts.instagram
+        let instagramAccessToken, instagramBusinessId;
+        if (brandDoc.socialAccounts && brandDoc.socialAccounts.instagram) {
+          instagramAccessToken = brandDoc.socialAccounts.instagram.accessToken;
+          instagramBusinessId = brandDoc.socialAccounts.instagram.username; // username is actually the IG user ID
+        }
+        // Compose brandDocForInstagram with credentials for postContent
+        const brandDocForInstagram = {
+          ...brandDoc,
+          instagramAccessToken,
+          instagramBusinessId,
         };
-        postResult = await postContentToInstagram(postForInstagram, brandDoc);
+        // Compose postDoc for Instagram posting (matches postContentToInstagram signature)
+        const postForInstagram = {
+          ...postDoc,
+          imageUrls,
+          contentResponse: generatedContent,
+        };
+        // Pass context as third argument
+        postResult = await postContentToInstagram(postForInstagram, brandDocForInstagram, context);
       }
 
-      // Update post document with contentResponse, imageUrl (if any), status, and posting result
+      // Update post document with contentResponse, imageUrls, status, and posting result
       await postsContainer.item(postId, brandId).replace({
         ...postDoc,
         contentResponse: generatedContent,
-        imageUrl,
-        status: postResult?.success ? "posted" : "posting",
+        imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
+        status: postResult?.success ? "posted" : (imageUrls.length > 0 ? "generated" : "posting"),
         postResult,
         updatedAt: new Date().toISOString(),
       });
     } catch (err) {
       context.error("Error generating content:", err);
-      // Update post document with error status
       await postsContainer.item(postId, brandId).replace({
         ...postDoc,
         status: "error",
@@ -158,9 +183,9 @@ export async function orchestrateContent(
       status: 200,
       jsonBody: {
         postId,
-        status: imageUrl ? (postResult?.success ? "posted" : "posting") : "generated",
+        status: imageUrls.length === 1 ? (postResult?.success ? "posted" : "posting") : (imageUrls.length > 0 ? "generated" : undefined),
         contentResponse: generatedContent,
-        imageUrl,
+        imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
         postResult
       }
     };
