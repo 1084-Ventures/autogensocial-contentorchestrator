@@ -1,8 +1,10 @@
 
 // Requires: npm install canvas
+
 import { createCanvas, loadImage, CanvasRenderingContext2D, Image } from 'canvas';
-import { downloadBlobToBuffer } from './shared/blobClient';
+import { downloadBlobToBuffer } from '../shared/blobClient';
 import { components } from '../../generated/models';
+import { findRelevantMedia } from '../shared/findRelevantMedia';
 
 type ImageTemplate = components["schemas"]["ImageTemplate"];
 type VisualStyle = components["schemas"]["VisualStyle"];
@@ -27,7 +29,6 @@ function getDimensions(aspectRatio?: AspectRatio) {
   }
   return ASPECT_RATIOS.square;
 }
-
 
 function getFontString(textStyle?: TextStyle) {
   const size = textStyle?.font?.size || '48px';
@@ -64,7 +65,7 @@ export async function generateImage({ imageTemplate, quote }: GenerateImageOptio
     throw new Error('Invalid imageTemplate for image generation');
   }
 
-  const { aspectRatio, mediaType, setUrl, visualStyleObj } = imageTemplate;
+  const { aspectRatio, mediaType, setUrl, visualStyleObj, description: templateDescription, brandDescription } = imageTemplate as any;
   const { width, height } = getDimensions(aspectRatio);
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d');
@@ -76,13 +77,24 @@ export async function generateImage({ imageTemplate, quote }: GenerateImageOptio
     selectedTheme = visualStyleObj.themes[idx];
   }
 
+  // Find media URL if needed
+  let resolvedUrl = setUrl;
+  if ((mediaType === 'uploaded' && !setUrl) || mediaType === 'online') {
+    resolvedUrl = await findRelevantMedia({
+      mediaType,
+      quote,
+      templateDescription,
+      brandDescription
+    });
+  }
+
   // Draw background
-  if (mediaType === 'uploaded' && setUrl) {
+  if (mediaType === 'uploaded' && resolvedUrl) {
     try {
       let img: Image;
-      // Try to parse setUrl as Azure Blob Storage URL: https://<account>.blob.core.windows.net/<container>/<blob>
+      // Try to parse resolvedUrl as Azure Blob Storage URL: https://<account>.blob.core.windows.net/<container>/<blob>
       const azureBlobUrlPattern = /^https:\/\/([^.]+)\.blob\.core\.windows\.net\/([^\/]+)\/(.+)$/;
-      const match = setUrl.match(azureBlobUrlPattern);
+      const match = resolvedUrl.match(azureBlobUrlPattern);
       if (match) {
         const containerName = match[2];
         const blobName = decodeURIComponent(match[3]);
@@ -90,7 +102,7 @@ export async function generateImage({ imageTemplate, quote }: GenerateImageOptio
         img = await loadImage(buffer);
       } else {
         // fallback to public URL
-        img = await loadImage(setUrl);
+        img = await loadImage(resolvedUrl);
       }
       // Center-crop the image to fit the canvas without distortion
       const imgAspect = img.width / img.height;
@@ -102,6 +114,25 @@ export async function generateImage({ imageTemplate, quote }: GenerateImageOptio
         sx = (img.width - sWidth) / 2;
       } else if (imgAspect < canvasAspect) {
         // Image is taller than canvas: crop top/bottom
+        sHeight = img.width / canvasAspect;
+        sy = (img.height - sHeight) / 2;
+      }
+      ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, width, height);
+    } catch (e) {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, width, height);
+    }
+  } else if (mediaType === 'online' && resolvedUrl) {
+    try {
+      const img = await loadImage(resolvedUrl);
+      // Center-crop the image to fit the canvas without distortion
+      const imgAspect = img.width / img.height;
+      const canvasAspect = width / height;
+      let sx = 0, sy = 0, sWidth = img.width, sHeight = img.height;
+      if (imgAspect > canvasAspect) {
+        sWidth = img.height * canvasAspect;
+        sx = (img.width - sWidth) / 2;
+      } else if (imgAspect < canvasAspect) {
         sHeight = img.width / canvasAspect;
         sy = (img.height - sHeight) / 2;
       }

@@ -1,12 +1,12 @@
 
 const endpoint = process.env["AZURE_OPENAI_ENDPOINT"];
-const apiKey = process.env["AZURE_OPENAI_API_KEY"];
+const apiKey = process.env["AZURE_OPENAI_KEY"];
 
 if (!endpoint) {
   throw new Error("AZURE_OPENAI_ENDPOINT environment variable is not set.");
 }
 if (!apiKey) {
-  throw new Error("AZURE_OPENAI_API_KEY environment variable is not set.");
+  throw new Error("AZURE_OPENAI_KEY environment variable is not set.");
 }
 
 // Example: deploymentName = "gpt-35-turbo"

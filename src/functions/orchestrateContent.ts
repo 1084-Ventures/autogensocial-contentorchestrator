@@ -1,10 +1,11 @@
 
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
-import { cosmosClient } from "./shared/cosmosClient";
+import { cosmosClient } from "../shared/cosmosClient";
 import { generateContentFromPromptTemplate } from "./generateContent";
 import { generateImage } from "./generateImage";
 import { BlobServiceClient } from "@azure/storage-blob";
 import { postContentToInstagram } from "./postContent";
+import { AppConfigurationClient } from "@azure/app-configuration";
 import type { components } from "../../generated/models";
 type ContentOrchestratorRequest = components["schemas"]["ContentOrchestratorRequest"];
 type ContentGenerationTemplateDocument = components["schemas"]["ContentGenerationTemplateDocument"];
@@ -21,6 +22,7 @@ export async function orchestrateContent(
   request: HttpRequest,
   context: InvocationContext
 ): Promise<HttpResponseInit> {
+  let brandDoc: any = undefined;
   try {
     // Accept brandId and templateId from query or JSON body
     let brandId = request.query.get("brandId");
@@ -52,8 +54,32 @@ export async function orchestrateContent(
       };
     }
 
-    // Now create the post document with socialAccounts from template
-    const socialAccounts = resource.templateInfo?.socialAccounts || [];
+    // Build SocialAccountEntry[] for postDoc: for each platform in templateInfo.socialAccounts, get credentials from brandDoc
+    const templateSocialAccounts = resource.templateInfo?.socialAccounts || [];
+    // Query brands container for brand document to get credentials
+    const brandsContainerId = process.env["COSMOS_DB_CONTAINER_BRAND"] || "brands";
+    const brandsContainer = cosmosClient.database(databaseId).container(brandsContainerId);
+    const querySpec = {
+      query: "SELECT * FROM c WHERE c.id = @brandId",
+      parameters: [{ name: "@brandId", value: brandId }]
+    };
+    const { resources: brandDocs } = await brandsContainer.items.query(querySpec).fetchAll();
+    // brandDoc is declared at the top of the function
+    brandDoc = brandDocs[0];
+    // Compose SocialAccountEntry[] for postDoc
+    const socialAccounts = templateSocialAccounts.map((tpl: any) => {
+      const platform = tpl.platform;
+      // Find matching credentials in brandDoc.socialAccounts (array or object)
+      let account = {};
+      if (Array.isArray(brandDoc?.socialAccounts)) {
+        const found = brandDoc.socialAccounts.find((a: any) => a.platform === platform);
+        if (found) account = found.account || {};
+      } else if (brandDoc?.socialAccounts && typeof brandDoc.socialAccounts === 'object') {
+        // fallback for object shape (legacy)
+        account = brandDoc.socialAccounts[platform] || {};
+      }
+      return { platform, account };
+    });
     const postDoc = {
       id: postId,
       brandId,
@@ -86,22 +112,32 @@ export async function orchestrateContent(
     let generatedContent;
     let imageUrls: string[] = [];
     let postResult: { success: boolean; message: string } | undefined = undefined;
-    let brandDoc: any = undefined;
     try {
-      generatedContent = await generateContentFromPromptTemplate(promptTemplate);
+      // Fetch mapped keys from Azure App Configuration based on content type
+      const contentItem = resource.templateSettings?.contentItem;
+      const contentType = contentItem?.contentType || "text";
+      const appConfigConnectionString = process.env.AZURE_APP_CONFIG_CONNECTION_STRING;
+      const appConfigClient = new AppConfigurationClient(appConfigConnectionString);
+      async function getPromptConfig(contentType: string) {
+        const keys = ["SystemPrompt", "MaxTokens", "Model", "Temperature"];
+        const config: Record<string, any> = {};
+        for (const key of keys) {
+          const configKey = `PromptDefaults:${key}:${contentType}`;
+          try {
+            const setting = await appConfigClient.getConfigurationSetting({ key: configKey });
+            config[key] = setting.value;
+          } catch (err) {
+            context.log(`Config key not found: ${configKey}`, err);
+          }
+        }
+        return config;
+      }
+
+      const promptConfig = await getPromptConfig(contentType);
+      generatedContent = await generateContentFromPromptTemplate(promptTemplate, promptConfig);
 
       // Multi-image support: generate and upload each image
-      const contentItem = resource.templateSettings?.contentItem;
       if (contentItem?.contentType === 'images' && Array.isArray(generatedContent?.images)) {
-        // Query brands container for brand document to get userId
-        const brandsContainerId = process.env["COSMOS_DB_CONTAINER_BRAND"] || "brands";
-        const brandsContainer = cosmosClient.database(databaseId).container(brandsContainerId);
-        const querySpec = {
-          query: "SELECT * FROM c WHERE c.id = @brandId",
-          parameters: [{ name: "@brandId", value: brandId }]
-        };
-        const { resources: brandDocs } = await brandsContainer.items.query(querySpec).fetchAll();
-        brandDoc = brandDocs[0];
         const userId = brandDoc?.userId || 'unknownUser';
 
         const blobConnectionString = process.env.PUBLIC_BLOB_CONNECTION_STRING;
@@ -132,28 +168,16 @@ export async function orchestrateContent(
         }
       }
 
-      // Post to Instagram if images exist and brandDoc is available (supports both single and multi-image)
+      // Post to all social platforms selected in the template, using credentials from brandDoc
       if (imageUrls.length > 0 && brandDoc) {
-        // Extract Instagram credentials from brandDoc.socialAccounts.instagram
-        let instagramAccessToken, instagramBusinessId;
-        if (brandDoc.socialAccounts && brandDoc.socialAccounts.instagram) {
-          instagramAccessToken = brandDoc.socialAccounts.instagram.accessToken;
-          instagramBusinessId = brandDoc.socialAccounts.instagram.username; // username is actually the IG user ID
-        }
-        // Compose brandDocForInstagram with credentials for postContent
-        const brandDocForInstagram = {
-          ...brandDoc,
-          instagramAccessToken,
-          instagramBusinessId,
-        };
-        // Compose postDoc for Instagram posting (matches postContentToInstagram signature)
-        const postForInstagram = {
+        // Compose postDoc for posting (add imageUrls and contentResponse)
+        const postForPlatforms = {
           ...postDoc,
           imageUrls,
           contentResponse: generatedContent,
         };
-        // Pass context as third argument
-        postResult = await postContentToInstagram(postForInstagram, brandDocForInstagram, context);
+        // Pass through to postContent, which will dispatch by platform using SocialAccountEntry[]
+        postResult = await import("./postContent").then(m => m.postContent(postForPlatforms, brandDoc, context));
       }
 
       // Update post document with contentResponse, imageUrls, status, and posting result

@@ -1,6 +1,6 @@
-
 import type { components } from "../../generated/models";
-import { callAzureOpenAI } from "./shared/azureOpenAIClient";
+import { callAzureOpenAI } from "../shared/azureOpenAIClient";
+import { AppConfigurationClient } from "@azure/app-configuration";
 
 type PromptTemplate = components["schemas"]["PromptTemplate"];
 
@@ -11,9 +11,38 @@ type PromptTemplate = components["schemas"]["PromptTemplate"];
  * @param promptTemplate The prompt template object
  * @returns The parsed JSON object from the OpenAI response
  */
-export async function generateContentFromPromptTemplate(promptTemplate: PromptTemplate): Promise<any> {
-  if (!promptTemplate || !promptTemplate.userPrompt || !promptTemplate.model) {
-    throw new Error("Prompt template, userPrompt, and model are required.");
+export async function generateContentFromPromptTemplate(
+  promptTemplate: PromptTemplate,
+  promptConfig?: Record<string, any>
+): Promise<any> {
+  if (!promptTemplate || !promptTemplate.userPrompt) {
+    throw new Error("Prompt template and userPrompt are required.");
+  }
+
+  // Use mapped config values if provided, otherwise fetch from Azure App Configuration
+  let systemPrompt: string | undefined;
+  let temperature: number = 0.7;
+  let maxTokens: number = 100;
+  let model: string = "gpt-4";
+
+  if (promptConfig) {
+    systemPrompt = promptConfig["SystemPrompt"] ?? undefined;
+    temperature = promptConfig["Temperature"] ? Number(promptConfig["Temperature"]) : 0.7;
+    maxTokens = promptConfig["MaxTokens"] ? Number(promptConfig["MaxTokens"]) : 100;
+    model = promptConfig["Model"] ?? "gpt-4";
+  } else {
+    const appConfigConnectionString = process.env["AZURE_APP_CONFIG_CONNECTION_STRING"];
+    const client = new AppConfigurationClient(appConfigConnectionString!);
+    const [systemPromptSetting, temperatureSetting, maxTokensSetting, modelSetting] = await Promise.all([
+      client.getConfigurationSetting({ key: "PromptDefaults:SystemPrompt" }),
+      client.getConfigurationSetting({ key: "PromptDefaults:Temperature" }),
+      client.getConfigurationSetting({ key: "PromptDefaults:MaxTokens" }),
+      client.getConfigurationSetting({ key: "PromptDefaults:Model" })
+    ]);
+    systemPrompt = systemPromptSetting.value;
+    temperature = temperatureSetting.value ? Number(temperatureSetting.value) : 0.7;
+    maxTokens = maxTokensSetting.value ? Number(maxTokensSetting.value) : 100;
+    model = modelSetting.value || "gpt-4";
   }
 
   // Prepare variables and randomize if needed
@@ -31,16 +60,16 @@ export async function generateContentFromPromptTemplate(promptTemplate: PromptTe
   // Build the payload for Azure OpenAI
   const payload = {
     messages: [
-      promptTemplate.systemPrompt ? { role: "system", content: promptTemplate.systemPrompt } : undefined,
+      systemPrompt ? { role: "system", content: systemPrompt } : undefined,
       { role: "user", content: userPrompt }
     ].filter(Boolean),
-    temperature: promptTemplate.temperature ?? 0.7,
-    max_tokens: promptTemplate.maxTokens ?? 100,
+    temperature,
+    max_tokens: maxTokens,
     // model is used as deploymentName in Azure OpenAI
   };
 
   try {
-    const response = await callAzureOpenAI(promptTemplate.model!, payload);
+    const response = await callAzureOpenAI(model, payload);
     // Expecting the response in choices[0].message.content
     const content = response?.choices?.[0]?.message?.content;
     if (!content) throw new Error("No content returned from OpenAI.");

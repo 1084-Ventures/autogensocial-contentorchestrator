@@ -1,14 +1,26 @@
 // Main entry point for posting content to all social platforms
+// postDoc.socialAccounts is now an array of SocialAccountEntry { platform, account }
 export async function postContent(postDoc: any, brandDoc: any, context: any): Promise<{ success: boolean; message: string }> {
-  const socialAccounts = postDoc.socialAccounts || [];
-  let result: { success: boolean; message: string } = { success: false, message: 'No social accounts specified.' };
-  for (const account of socialAccounts) {
-    if (account === 'instagram') {
-      result = await postContentToInstagram(postDoc, brandDoc, context);
+  const socialAccounts: any[] = postDoc.socialAccounts || [];
+  if (!Array.isArray(socialAccounts) || socialAccounts.length === 0) {
+    return { success: false, message: 'No social accounts specified.' };
+  }
+  let lastResult: { success: boolean; message: string } = { success: false, message: 'No platforms posted.' };
+  for (const entry of socialAccounts) {
+    const platform = entry.platform;
+    const account = entry.account || {};
+    if (platform === 'instagram') {
+      // Compose a brandDoc with Instagram credentials from the account object
+      const brandDocForInstagram = {
+        ...brandDoc,
+        instagramAccessToken: account.accessToken,
+        instagramBusinessId: account.platformAccountId || account.username // prefer platformAccountId, fallback to username
+      };
+      lastResult = await postContentToInstagram(postDoc, brandDocForInstagram, context);
     }
     // Add more platforms here as needed
   }
-  return result;
+  return lastResult;
 }
 
 // Instagram dispatcher: decides between post and carousel
