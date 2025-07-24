@@ -22,9 +22,11 @@ export async function orchestrateContent(
   request: HttpRequest,
   context: InvocationContext
 ): Promise<HttpResponseInit> {
+  context.log("orchestrateContent function started");
   let brandDoc: any = undefined;
   try {
     // Accept brandId and templateId from query or JSON body
+    context.log("Parsing request for brandId and templateId");
     let brandId = request.query.get("brandId");
     let templateId = request.query.get("templateId");
     if (!brandId || !templateId) {
@@ -33,6 +35,7 @@ export async function orchestrateContent(
       templateId = templateId || body.templateId;
     }
     if (!brandId || !templateId) {
+      context.log("WARN: Missing brandId or templateId", { brandId, templateId });
       return {
         status: 400,
         jsonBody: { message: "brandId and templateId are required." }
@@ -48,6 +51,7 @@ export async function orchestrateContent(
     const { resource } = await templateContainer.item(templateId, brandId).read<ContentGenerationTemplateDocument>();
 
     if (!resource) {
+      context.log("WARN: ContentGenerationTemplateDocument not found", { templateId, brandId });
       return {
         status: 404,
         jsonBody: { message: "ContentGenerationTemplateDocument not found." }
@@ -65,6 +69,7 @@ export async function orchestrateContent(
     };
     const { resources: brandDocs } = await brandsContainer.items.query(querySpec).fetchAll();
     // brandDoc is declared at the top of the function
+    context.log("Brand document lookup result", { found: brandDocs.length > 0 });
     brandDoc = brandDocs[0];
     // Compose SocialAccountEntry[] for postDoc
     const socialAccounts = templateSocialAccounts.map((tpl: any) => {
@@ -93,7 +98,7 @@ export async function orchestrateContent(
       await postsContainer.items.create(postDoc);
       context.log("Created post document", { postId, brandId, templateId });
     } catch (err) {
-      context.error("Failed to create post document", err);
+      context.log("ERROR: Failed to create post document", err);
       return {
         status: 500,
         jsonBody: { message: "Failed to create post document." }
@@ -103,6 +108,7 @@ export async function orchestrateContent(
     // Call generateContentFromPromptTemplate if promptTemplate exists
     const promptTemplate = resource.templateSettings?.promptTemplate;
     if (!promptTemplate) {
+      context.log("WARN: No promptTemplate found in template document", { templateId });
       return {
         status: 400,
         jsonBody: { message: "No promptTemplate found in template document." }
@@ -133,8 +139,11 @@ export async function orchestrateContent(
         return config;
       }
 
+      context.log("Fetching prompt config", { contentType });
       const promptConfig = await getPromptConfig(contentType);
+      context.log("Prompt config fetched", promptConfig);
       generatedContent = await generateContentFromPromptTemplate(promptTemplate, promptConfig);
+      context.log("Generated content", generatedContent);
 
       // Multi-image support: generate and upload each image
       if (contentItem?.contentType === 'images' && Array.isArray(generatedContent?.images)) {
@@ -170,6 +179,7 @@ export async function orchestrateContent(
 
       // Post to all social platforms selected in the template, using credentials from brandDoc
       if (imageUrls.length > 0 && brandDoc) {
+        context.log("Posting to social platforms", { imageUrlsCount: imageUrls.length });
         // Compose postDoc for posting (add imageUrls and contentResponse)
         const postForPlatforms = {
           ...postDoc,
@@ -181,6 +191,7 @@ export async function orchestrateContent(
       }
 
       // Update post document with contentResponse, imageUrls, status, and posting result
+      context.log("Updating post document with results", { postId, brandId });
       await postsContainer.item(postId, brandId).replace({
         ...postDoc,
         contentResponse: generatedContent,
@@ -190,7 +201,7 @@ export async function orchestrateContent(
         updatedAt: new Date().toISOString(),
       });
     } catch (err) {
-      context.error("Error generating content:", err);
+      context.log("ERROR: Error generating content:", err);
       await postsContainer.item(postId, brandId).replace({
         ...postDoc,
         status: "error",
@@ -214,7 +225,7 @@ export async function orchestrateContent(
       }
     };
   } catch (err: any) {
-    context.error("Error in orchestrateContent:", err);
+    context.log("ERROR: Error in orchestrateContent:", err);
     return {
       status: 500,
       jsonBody: { message: "Internal server error." }

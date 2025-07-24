@@ -9,3 +9,4 @@ local.settings.json
 test
 tsconfig.json
 .venv/
+node_modules/

@@ -15,6 +15,7 @@ export async function generateContentFromPromptTemplate(
   promptTemplate: PromptTemplate,
   promptConfig?: Record<string, any>
 ): Promise<any> {
+
   if (!promptTemplate || !promptTemplate.userPrompt) {
     throw new Error("Prompt template and userPrompt are required.");
   }
@@ -23,13 +24,13 @@ export async function generateContentFromPromptTemplate(
   let systemPrompt: string | undefined;
   let temperature: number = 0.7;
   let maxTokens: number = 100;
-  let model: string = "gpt-4";
+  let model: string = "gpt-4.1";
 
   if (promptConfig) {
     systemPrompt = promptConfig["SystemPrompt"] ?? undefined;
     temperature = promptConfig["Temperature"] ? Number(promptConfig["Temperature"]) : 0.7;
     maxTokens = promptConfig["MaxTokens"] ? Number(promptConfig["MaxTokens"]) : 100;
-    model = promptConfig["Model"] ?? "gpt-4";
+    model = promptConfig["Model"] || "gpt-4.1";
   } else {
     const appConfigConnectionString = process.env["AZURE_APP_CONFIG_CONNECTION_STRING"];
     const client = new AppConfigurationClient(appConfigConnectionString!);
@@ -37,13 +38,20 @@ export async function generateContentFromPromptTemplate(
       client.getConfigurationSetting({ key: "PromptDefaults:SystemPrompt" }),
       client.getConfigurationSetting({ key: "PromptDefaults:Temperature" }),
       client.getConfigurationSetting({ key: "PromptDefaults:MaxTokens" }),
-      client.getConfigurationSetting({ key: "PromptDefaults:Model" })
+      client.getConfigurationSetting({ key: "PromptDefaults:Model" }),
     ]);
     systemPrompt = systemPromptSetting.value;
     temperature = temperatureSetting.value ? Number(temperatureSetting.value) : 0.7;
     maxTokens = maxTokensSetting.value ? Number(maxTokensSetting.value) : 100;
-    model = modelSetting.value || "gpt-4";
+    model = modelSetting.value || "gpt-4.1";
   }
+
+  // Log prompt and config for debugging
+  console.log("[generateContent] systemPrompt:", systemPrompt);
+  console.log("[generateContent] userPrompt:", promptTemplate.userPrompt);
+  console.log("[generateContent] temperature:", temperature);
+  console.log("[generateContent] maxTokens:", maxTokens);
+  console.log("[generateContent] model:", model);
 
   // Prepare variables and randomize if needed
   let userPrompt = promptTemplate.userPrompt;
@@ -65,11 +73,12 @@ export async function generateContentFromPromptTemplate(
     ].filter(Boolean),
     temperature,
     max_tokens: maxTokens,
-    // model is used as deploymentName in Azure OpenAI
+    model: model
   };
+  console.log("[generateContent] Payload to OpenAI:", JSON.stringify(payload, null, 2));
 
   try {
-    const response = await callAzureOpenAI(model, payload);
+    const response = await callAzureOpenAI(payload);
     // Expecting the response in choices[0].message.content
     const content = response?.choices?.[0]?.message?.content;
     if (!content) throw new Error("No content returned from OpenAI.");
