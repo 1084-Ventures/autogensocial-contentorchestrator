@@ -1,4 +1,3 @@
-
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
 import { cosmosClient } from "../shared/cosmosClient";
 import { generateContentFromPromptTemplate } from "./generateContent";
