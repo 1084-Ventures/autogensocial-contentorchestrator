@@ -8,9 +8,3 @@ __queuestorage__
 local.settings.json
 test
 tsconfig.json
-.venv/
-node_modules/
-node_modules
-node_modules/**
-**/node_modules/**
-AzuriteConfig
