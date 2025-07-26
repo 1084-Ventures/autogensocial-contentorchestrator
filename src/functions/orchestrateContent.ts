@@ -77,17 +77,13 @@ export async function orchestrateContent(
     context.log("Template socialAccounts before mapping:", templateSocialAccounts);
     context.log("BrandDoc socialAccounts:", brandDoc?.socialAccounts);
     let socialAccounts = templateSocialAccounts
-      .filter((tpl: any) => !!tpl.platform)
-      .map((tpl: any) => {
-        const platform = tpl.platform;
+      .filter((platform: string) => !!platform)
+      .map((platform: string) => {
         let account = {};
         let found = undefined;
         if (Array.isArray(brandDoc?.socialAccounts)) {
           found = brandDoc.socialAccounts.find((a: any) => a.platform === platform);
           if (found) account = found.account || {};
-        } else if (brandDoc?.socialAccounts && typeof brandDoc.socialAccounts === 'object') {
-          found = brandDoc.socialAccounts[platform];
-          account = found || {};
         }
         context.log("Mapping social account:", { platform, found, account });
         return { platform, account };
