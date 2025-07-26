@@ -1,6 +1,3 @@
-
-// Requires: npm install canvas
-
 import { createCanvas, loadImage, CanvasRenderingContext2D, Image } from 'canvas';
 import { downloadBlobToBuffer } from '../shared/blobClient';
 import { components } from '../../generated/models';
@@ -14,6 +11,7 @@ type AspectRatio = components["schemas"]["AspectRatio"];
 interface GenerateImageOptions {
   imageTemplate: ImageTemplate;
   quote: string;
+  blobConnectionString?: string; // Optional, but required for blob download
 }
 
 const ASPECT_RATIOS: Record<string, { width: number; height: number }> = {
@@ -31,7 +29,8 @@ function getDimensions(aspectRatio?: AspectRatio) {
 }
 
 function getFontString(textStyle?: TextStyle) {
-  const size = textStyle?.font?.size || '48px';
+  let size = textStyle?.font?.size || '48px';
+  if (typeof size === 'number') size = `${size}px`;
   const weight = textStyle?.font?.weight || 'normal';
   const style = textStyle?.font?.style || 'normal';
   const family = textStyle?.font?.family || 'Arial';
@@ -60,13 +59,25 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, x: number, y: num
  * Generates an image with a text overlay based on a single imageTemplate and quote.
  * Returns a PNG buffer.
  */
-export async function generateImage({ imageTemplate, quote }: GenerateImageOptions): Promise<Buffer> {
-  if (!imageTemplate) {
-    throw new Error('Invalid imageTemplate for image generation');
+// Accept blobConnectionString as an option
+export async function generateImage({ imageTemplate, quote, blobConnectionString }: GenerateImageOptions): Promise<Buffer> {
+  // Log setUrl value
+  console.log('[generateImage] setUrl:', imageTemplate?.setUrl);
+  if (!imageTemplate?.setUrl) {
+    console.log('[generateImage] setUrl is missing or empty');
   }
 
+  // Debug: log received imageTemplate and quote
+  // Use console.log for visibility in most environments
+  console.log('[generateImage] Received imageTemplate:', JSON.stringify(imageTemplate, null, 2));
+  console.log('[generateImage] Received quote:', quote);
+
   const { aspectRatio, mediaType, setUrl, visualStyleObj, description: templateDescription, brandDescription } = imageTemplate as any;
+  console.log('[generateImage] aspectRatio:', aspectRatio, 'mediaType:', mediaType, 'setUrl:', setUrl);
+  console.log('[generateImage] visualStyleObj:', JSON.stringify(visualStyleObj, null, 2));
+
   const { width, height } = getDimensions(aspectRatio);
+  console.log('[generateImage] Calculated dimensions:', { width, height });
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d');
 
@@ -75,6 +86,9 @@ export async function generateImage({ imageTemplate, quote }: GenerateImageOptio
   if (visualStyleObj?.themes && Array.isArray(visualStyleObj.themes) && visualStyleObj.themes.length > 0) {
     const idx = Math.floor(Math.random() * visualStyleObj.themes.length);
     selectedTheme = visualStyleObj.themes[idx];
+    console.log('[generateImage] Selected theme:', JSON.stringify(selectedTheme, null, 2));
+  } else {
+    console.log('[generateImage] No valid themes found in visualStyleObj');
   }
 
   // Find media URL if needed
@@ -86,10 +100,11 @@ export async function generateImage({ imageTemplate, quote }: GenerateImageOptio
       templateDescription,
       brandDescription
     });
+    console.log('[generateImage] Resolved media URL:', resolvedUrl);
   }
 
   // Draw background
-  if (mediaType === 'uploaded' && resolvedUrl) {
+  if ((mediaType === 'uploaded' || mediaType === 'set') && resolvedUrl) {
     try {
       let img: Image;
       // Try to parse resolvedUrl as Azure Blob Storage URL: https://<account>.blob.core.windows.net/<container>/<blob>
@@ -98,11 +113,29 @@ export async function generateImage({ imageTemplate, quote }: GenerateImageOptio
       if (match) {
         const containerName = match[2];
         const blobName = decodeURIComponent(match[3]);
-        const buffer = await downloadBlobToBuffer(containerName, blobName);
-        img = await loadImage(buffer);
+        if (!blobConnectionString) {
+          throw new Error('blobConnectionString is required to download from Azure Blob Storage');
+        }
+        console.log(`[generateImage] Attempting to download blob: container=${containerName}, blob=${blobName}`);
+        try {
+          const buffer = await downloadBlobToBuffer(blobConnectionString, containerName, blobName);
+          console.log(`[generateImage] Blob downloaded, buffer length: ${buffer.length}`);
+          img = await loadImage(buffer);
+          console.log('[generateImage] Image loaded from buffer');
+        } catch (blobErr) {
+          console.error('[generateImage] Error downloading or loading blob:', blobErr);
+          throw blobErr;
+        }
       } else {
         // fallback to public URL
-        img = await loadImage(resolvedUrl);
+        console.log(`[generateImage] Attempting to load image from public URL: ${resolvedUrl}`);
+        try {
+          img = await loadImage(resolvedUrl);
+          console.log('[generateImage] Image loaded from public URL');
+        } catch (urlErr) {
+          console.error('[generateImage] Error loading image from public URL:', urlErr);
+          throw urlErr;
+        }
       }
       // Center-crop the image to fit the canvas without distortion
       const imgAspect = img.width / img.height;
@@ -118,13 +151,17 @@ export async function generateImage({ imageTemplate, quote }: GenerateImageOptio
         sy = (img.height - sHeight) / 2;
       }
       ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, width, height);
+      console.log('[generateImage] Drew uploaded image background');
     } catch (e) {
+      console.error('[generateImage] Error drawing uploaded image background:', e);
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, width, height);
     }
   } else if (mediaType === 'online' && resolvedUrl) {
     try {
+      console.log(`[generateImage] Attempting to load online image: ${resolvedUrl}`);
       const img = await loadImage(resolvedUrl);
+      console.log('[generateImage] Online image loaded');
       // Center-crop the image to fit the canvas without distortion
       const imgAspect = img.width / img.height;
       const canvasAspect = width / height;
@@ -137,16 +174,20 @@ export async function generateImage({ imageTemplate, quote }: GenerateImageOptio
         sy = (img.height - sHeight) / 2;
       }
       ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, width, height);
+      console.log('[generateImage] Drew online image background');
     } catch (e) {
+      console.error('[generateImage] Error drawing online image background:', e);
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, width, height);
     }
   } else if (mediaType === 'color' && selectedTheme?.backgroundColor) {
     ctx.fillStyle = selectedTheme.backgroundColor;
     ctx.fillRect(0, 0, width, height);
+    console.log('[generateImage] Drew color background:', selectedTheme.backgroundColor);
   } else {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, width, height);
+    console.log('[generateImage] Drew default black background');
   }
 
   // Overlay box (optional, now sized to text with margin and alignment)

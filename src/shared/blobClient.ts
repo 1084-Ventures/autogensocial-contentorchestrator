@@ -1,31 +1,26 @@
+
 import { BlobServiceClient, ContainerClient, BlockBlobClient } from '@azure/storage-blob';
 
-const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
-if (!connectionString) {
-  throw new Error('AZURE_STORAGE_CONNECTION_STRING is not set in environment variables');
-}
-
-const blobServiceClient = BlobServiceClient.fromConnectionString(connectionString);
-
 /**
- * Get a container client for a given container name
+ * Get a container client for a given container name and connection string
  */
-export function getContainerClient(containerName: string): ContainerClient {
+export function getContainerClient(connectionString: string, containerName: string): ContainerClient {
+  const blobServiceClient = BlobServiceClient.fromConnectionString(connectionString);
   return blobServiceClient.getContainerClient(containerName);
 }
 
 /**
- * Get a block blob client for a given container and blob name
+ * Get a block blob client for a given container and blob name and connection string
  */
-export function getBlockBlobClient(containerName: string, blobName: string): BlockBlobClient {
-  return getContainerClient(containerName).getBlockBlobClient(blobName);
+export function getBlockBlobClient(connectionString: string, containerName: string, blobName: string): BlockBlobClient {
+  return getContainerClient(connectionString, containerName).getBlockBlobClient(blobName);
 }
 
 /**
  * Download a blob as a Buffer
  */
-export async function downloadBlobToBuffer(containerName: string, blobName: string): Promise<Buffer> {
-  const blockBlobClient = getBlockBlobClient(containerName, blobName);
+export async function downloadBlobToBuffer(connectionString: string, containerName: string, blobName: string): Promise<Buffer> {
+  const blockBlobClient = getBlockBlobClient(connectionString, containerName, blobName);
   const downloadBlockBlobResponse = await blockBlobClient.download();
   return await streamToBuffer(downloadBlockBlobResponse.readableStreamBody);
 }
@@ -33,8 +28,8 @@ export async function downloadBlobToBuffer(containerName: string, blobName: stri
 /**
  * Upload a Buffer to a blob
  */
-export async function uploadBufferToBlob(containerName: string, blobName: string, buffer: Buffer, contentType?: string): Promise<void> {
-  const blockBlobClient = getBlockBlobClient(containerName, blobName);
+export async function uploadBufferToBlob(connectionString: string, containerName: string, blobName: string, buffer: Buffer, contentType?: string): Promise<void> {
+  const blockBlobClient = getBlockBlobClient(connectionString, containerName, blobName);
   await blockBlobClient.uploadData(buffer, {
     blobHTTPHeaders: contentType ? { blobContentType: contentType } : undefined,
   });

@@ -13,38 +13,45 @@ type PromptTemplate = components["schemas"]["PromptTemplate"];
  */
 export async function generateContentFromPromptTemplate(
   promptTemplate: PromptTemplate,
-  promptConfig?: Record<string, any>
+  promptConfig: Record<string, any>
 ): Promise<any> {
 
   if (!promptTemplate || !promptTemplate.userPrompt) {
     throw new Error("Prompt template and userPrompt are required.");
   }
-
-  // Use mapped config values if provided, otherwise fetch from Azure App Configuration
-  let systemPrompt: string | undefined;
-  let temperature: number = 0.7;
-  let maxTokens: number = 100;
-  let model: string = "gpt-4.1";
-
-  if (promptConfig) {
-    systemPrompt = promptConfig["SystemPrompt"] ?? undefined;
-    temperature = promptConfig["Temperature"] ? Number(promptConfig["Temperature"]) : 0.7;
-    maxTokens = promptConfig["MaxTokens"] ? Number(promptConfig["MaxTokens"]) : 100;
-    model = promptConfig["Model"] || "gpt-4.1";
-  } else {
-    const appConfigConnectionString = process.env["AZURE_APP_CONFIG_CONNECTION_STRING"];
-    const client = new AppConfigurationClient(appConfigConnectionString!);
-    const [systemPromptSetting, temperatureSetting, maxTokensSetting, modelSetting] = await Promise.all([
-      client.getConfigurationSetting({ key: "PromptDefaults:SystemPrompt" }),
-      client.getConfigurationSetting({ key: "PromptDefaults:Temperature" }),
-      client.getConfigurationSetting({ key: "PromptDefaults:MaxTokens" }),
-      client.getConfigurationSetting({ key: "PromptDefaults:Model" }),
-    ]);
-    systemPrompt = systemPromptSetting.value;
-    temperature = temperatureSetting.value ? Number(temperatureSetting.value) : 0.7;
-    maxTokens = maxTokensSetting.value ? Number(maxTokensSetting.value) : 100;
-    model = modelSetting.value || "gpt-4.1";
+  if (!promptConfig) {
+    throw new Error("promptConfig must be provided by orchestrateContent.");
   }
+
+  let systemPrompt: string | undefined = promptConfig["SystemPrompt"];
+  let temperature: number = promptConfig["Temperature"] ? Number(promptConfig["Temperature"]) : 0.7;
+  let maxTokens: number = promptConfig["MaxTokens"] ? Number(promptConfig["MaxTokens"]) : 100;
+  let model: string = promptConfig["Model"] || "gpt-4.1";
+
+  // Always replace {numImages} in systemPrompt if present
+  let numImages: number | undefined = undefined;
+  if (typeof promptConfig["numImages"] === "number") {
+    numImages = promptConfig["numImages"];
+  } else if (
+    promptTemplate &&
+    (promptTemplate as any).contentItem &&
+    (promptTemplate as any).contentItem.imagesTemplate &&
+    typeof (promptTemplate as any).contentItem.imagesTemplate.numImages === "number"
+  ) {
+    numImages = (promptTemplate as any).contentItem.imagesTemplate.numImages;
+  } else if (
+    promptTemplate && typeof (promptTemplate as any).numImages === "number"
+  ) {
+    numImages = (promptTemplate as any).numImages;
+  }
+  if (systemPrompt && systemPrompt.includes("{numImages}")) {
+    if (typeof numImages === "number") {
+      systemPrompt = systemPrompt.replace(/\{numImages\}/g, String(numImages));
+    } else {
+      systemPrompt = systemPrompt.replace(/\{numImages\}/g, "1");
+    }
+  }
+  // ...existing code to call Azure OpenAI and return result...
 
   // Log prompt and config for debugging
   console.log("[generateContent] systemPrompt:", systemPrompt);

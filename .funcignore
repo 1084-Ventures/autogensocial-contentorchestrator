@@ -10,3 +10,6 @@ test
 tsconfig.json
 .venv/
 node_modules/
+node_modules
+node_modules/**
+**/node_modules/**

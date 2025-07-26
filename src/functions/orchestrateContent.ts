@@ -3,7 +3,7 @@ import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/fu
 import { cosmosClient } from "../shared/cosmosClient";
 import { generateContentFromPromptTemplate } from "./generateContent";
 import { generateImage } from "./generateImage";
-import { BlobServiceClient } from "@azure/storage-blob";
+import * as blobClient from "../shared/blobClient";
 import { postContentToInstagram } from "./postContent";
 import { AppConfigurationClient } from "@azure/app-configuration";
 import type { components } from "../../generated/models";
@@ -71,20 +71,45 @@ export async function orchestrateContent(
     // brandDoc is declared at the top of the function
     context.log("Brand document lookup result", { found: brandDocs.length > 0 });
     brandDoc = brandDocs[0];
-    // Compose SocialAccountEntry[] for postDoc
-    const socialAccounts = templateSocialAccounts.map((tpl: any) => {
-      const platform = tpl.platform;
-      // Find matching credentials in brandDoc.socialAccounts (array or object)
-      let account = {};
-      if (Array.isArray(brandDoc?.socialAccounts)) {
-        const found = brandDoc.socialAccounts.find((a: any) => a.platform === platform);
-        if (found) account = found.account || {};
-      } else if (brandDoc?.socialAccounts && typeof brandDoc.socialAccounts === 'object') {
-        // fallback for object shape (legacy)
-        account = brandDoc.socialAccounts[platform] || {};
-      }
-      return { platform, account };
+    context.log("Full brandDoc:", brandDoc);
+    context.log("Full template resource:", resource);
+    // Compose SocialAccountEntry[] for postDoc, filter out entries without a valid platform, then filter out entries without credentials
+    context.log("Template socialAccounts before mapping:", templateSocialAccounts);
+    context.log("BrandDoc socialAccounts:", brandDoc?.socialAccounts);
+    let socialAccounts = templateSocialAccounts
+      .filter((tpl: any) => !!tpl.platform)
+      .map((tpl: any) => {
+        const platform = tpl.platform;
+        let account = {};
+        let found = undefined;
+        if (Array.isArray(brandDoc?.socialAccounts)) {
+          found = brandDoc.socialAccounts.find((a: any) => a.platform === platform);
+          if (found) account = found.account || {};
+        } else if (brandDoc?.socialAccounts && typeof brandDoc.socialAccounts === 'object') {
+          found = brandDoc.socialAccounts[platform];
+          account = found || {};
+        }
+        context.log("Mapping social account:", { platform, found, account });
+        return { platform, account };
+      })
+      // Only keep entries with a non-empty account object (has at least one key)
+      .filter((sa: any) => sa.account && Object.keys(sa.account).length > 0);
+    context.log("Final mapped socialAccounts for posting:", socialAccounts);
+    if (socialAccounts.length === 0) {
+      context.warn("No social accounts mapped for posting. Check brandDoc and templateSocialAccounts structure and credentials.");
+    }
+
+    // Only use credentials from brandDoc; do not fallback to environment variables
+    // If no valid Instagram credentials, log a warning
+    const hasInstagram = socialAccounts.some(sa => {
+      if (sa.platform !== 'instagram' || !sa.account) return false;
+      const acc = sa.account as any;
+      return acc.accessToken && (acc.platformAccountId || acc.username);
     });
+    if (!hasInstagram) {
+      context.log('No valid Instagram credentials found in brandDoc for this brand/template. Posting will be skipped for Instagram.');
+    }
+
     const postDoc = {
       id: postId,
       brandId,
@@ -94,6 +119,7 @@ export async function orchestrateContent(
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
+    context.log("Full postDoc before posting:", postDoc);
     try {
       await postsContainer.items.create(postDoc);
       context.log("Created post document", { postId, brandId, templateId });
@@ -142,18 +168,34 @@ export async function orchestrateContent(
       context.log("Fetching prompt config", { contentType });
       const promptConfig = await getPromptConfig(contentType);
       context.log("Prompt config fetched", promptConfig);
+
+      // Replace {numImages} in SystemPrompt with value from template if present
+      let numImages: number | undefined = undefined;
+      if (contentItem && contentItem.imagesTemplate && typeof contentItem.imagesTemplate.numImages === "number") {
+        numImages = contentItem.imagesTemplate.numImages;
+      }
+      if (typeof promptConfig["SystemPrompt"] === "string" && promptConfig["SystemPrompt"].includes("{numImages}")) {
+        if (typeof numImages === "number") {
+          promptConfig["SystemPrompt"] = promptConfig["SystemPrompt"].replace(/\{numImages\}/g, String(numImages));
+          context.log("SystemPrompt after {numImages} replacement:", promptConfig["SystemPrompt"]);
+        } else {
+          // fallback to 1 if not found
+          promptConfig["SystemPrompt"] = promptConfig["SystemPrompt"].replace(/\{numImages\}/g, "1");
+          context.log("SystemPrompt after {numImages} fallback replacement:", promptConfig["SystemPrompt"]);
+        }
+      }
+
       generatedContent = await generateContentFromPromptTemplate(promptTemplate, promptConfig);
       context.log("Generated content", generatedContent);
 
       // Multi-image support: generate and upload each image
       if (contentItem?.contentType === 'images' && Array.isArray(generatedContent?.images)) {
         const userId = brandDoc?.userId || 'unknownUser';
-
         const blobConnectionString = process.env.PUBLIC_BLOB_CONNECTION_STRING;
         if (!blobConnectionString) throw new Error('Missing PUBLIC_BLOB_CONNECTION_STRING');
-        const blobServiceClient = BlobServiceClient.fromConnectionString(blobConnectionString);
         const containerName = 'images';
-        const containerClient = blobServiceClient.getContainerClient(containerName);
+        // Ensure container exists
+        const containerClient = blobClient.getContainerClient(blobConnectionString, containerName);
         await containerClient.createIfNotExists();
 
         const imageTemplates = contentItem.imagesTemplate?.imageTemplates || [];
@@ -165,13 +207,20 @@ export async function orchestrateContent(
             context.log('Skipping image with missing quote or imageTemplate', { index: i });
             continue;
           }
+          // Log the contents of visualStyleObj.themes for debugging
+          if (imageTemplate.visualStyleObj && Array.isArray(imageTemplate.visualStyleObj.themes)) {
+            context.log('visualStyleObj.themes for image', { index: i, themes: imageTemplate.visualStyleObj.themes });
+          } else {
+            context.log('visualStyleObj.themes missing or not an array', { index: i, visualStyleObj: imageTemplate.visualStyleObj });
+          }
           context.log('Generating image', { index: i, quote, imageTemplate });
-          const imageBuffer = await generateImage({ imageTemplate, quote });
+          // Use AZURE_STORAGE_CONNECTION_STRING for blob download in generateImage
+          const azureStorageConnectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
+          if (!azureStorageConnectionString) throw new Error('Missing AZURE_STORAGE_CONNECTION_STRING');
+          const imageBuffer = await generateImage({ imageTemplate, quote, blobConnectionString: azureStorageConnectionString });
           const blobName = `${userId}/${brandId}/${postId}/${postId}-${i + 1}.png`;
-          const blockBlobClient = containerClient.getBlockBlobClient(blobName);
-          await blockBlobClient.uploadData(imageBuffer, {
-            blobHTTPHeaders: { blobContentType: 'image/png' }
-          });
+          await blobClient.uploadBufferToBlob(blobConnectionString, containerName, blobName, imageBuffer, 'image/png');
+          const blockBlobClient = blobClient.getBlockBlobClient(blobConnectionString, containerName, blobName);
           imageUrls.push(blockBlobClient.url);
           context.log('Uploaded image to blob storage', { index: i, blobUrl: blockBlobClient.url });
         }
