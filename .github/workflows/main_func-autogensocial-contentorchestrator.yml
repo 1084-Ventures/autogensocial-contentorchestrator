@@ -73,7 +73,7 @@ jobs:
         with:
           app-name: 'func-autogensocial-contentorchestrator'
           slot-name: 'Production'
-          package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
+          package: .
           respect-funcignore: false
           remote-build: true
           enable-oryx-build: true
