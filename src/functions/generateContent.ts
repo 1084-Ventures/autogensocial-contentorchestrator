@@ -1,6 +1,6 @@
-
 import type { components } from "../../generated/models";
-import { callAzureOpenAI } from "./shared/azureOpenAIClient";
+import { callAzureOpenAI } from "../shared/azureOpenAIClient";
+import { AppConfigurationClient } from "@azure/app-configuration";
 
 type PromptTemplate = components["schemas"]["PromptTemplate"];
 
@@ -11,10 +11,54 @@ type PromptTemplate = components["schemas"]["PromptTemplate"];
  * @param promptTemplate The prompt template object
  * @returns The parsed JSON object from the OpenAI response
  */
-export async function generateContentFromPromptTemplate(promptTemplate: PromptTemplate): Promise<any> {
-  if (!promptTemplate || !promptTemplate.userPrompt || !promptTemplate.model) {
-    throw new Error("Prompt template, userPrompt, and model are required.");
+export async function generateContentFromPromptTemplate(
+  promptTemplate: PromptTemplate,
+  promptConfig: Record<string, any>
+): Promise<any> {
+
+  if (!promptTemplate || !promptTemplate.userPrompt) {
+    throw new Error("Prompt template and userPrompt are required.");
   }
+  if (!promptConfig) {
+    throw new Error("promptConfig must be provided by orchestrateContent.");
+  }
+
+  let systemPrompt: string | undefined = promptConfig["SystemPrompt"];
+  let temperature: number = promptConfig["Temperature"] ? Number(promptConfig["Temperature"]) : 0.7;
+  let maxTokens: number = promptConfig["MaxTokens"] ? Number(promptConfig["MaxTokens"]) : 100;
+  let model: string = promptConfig["Model"] || "gpt-4.1";
+
+  // Always replace {numImages} in systemPrompt if present
+  let numImages: number | undefined = undefined;
+  if (typeof promptConfig["numImages"] === "number") {
+    numImages = promptConfig["numImages"];
+  } else if (
+    promptTemplate &&
+    (promptTemplate as any).contentItem &&
+    (promptTemplate as any).contentItem.imagesTemplate &&
+    typeof (promptTemplate as any).contentItem.imagesTemplate.numImages === "number"
+  ) {
+    numImages = (promptTemplate as any).contentItem.imagesTemplate.numImages;
+  } else if (
+    promptTemplate && typeof (promptTemplate as any).numImages === "number"
+  ) {
+    numImages = (promptTemplate as any).numImages;
+  }
+  if (systemPrompt && systemPrompt.includes("{numImages}")) {
+    if (typeof numImages === "number") {
+      systemPrompt = systemPrompt.replace(/\{numImages\}/g, String(numImages));
+    } else {
+      systemPrompt = systemPrompt.replace(/\{numImages\}/g, "1");
+    }
+  }
+  // ...existing code to call Azure OpenAI and return result...
+
+  // Log prompt and config for debugging
+  console.log("[generateContent] systemPrompt:", systemPrompt);
+  console.log("[generateContent] userPrompt:", promptTemplate.userPrompt);
+  console.log("[generateContent] temperature:", temperature);
+  console.log("[generateContent] maxTokens:", maxTokens);
+  console.log("[generateContent] model:", model);
 
   // Prepare variables and randomize if needed
   let userPrompt = promptTemplate.userPrompt;
@@ -31,16 +75,17 @@ export async function generateContentFromPromptTemplate(promptTemplate: PromptTe
   // Build the payload for Azure OpenAI
   const payload = {
     messages: [
-      promptTemplate.systemPrompt ? { role: "system", content: promptTemplate.systemPrompt } : undefined,
+      systemPrompt ? { role: "system", content: systemPrompt } : undefined,
       { role: "user", content: userPrompt }
     ].filter(Boolean),
-    temperature: promptTemplate.temperature ?? 0.7,
-    max_tokens: promptTemplate.maxTokens ?? 100,
-    // model is used as deploymentName in Azure OpenAI
+    temperature,
+    max_tokens: maxTokens,
+    model: model
   };
+  console.log("[generateContent] Payload to OpenAI:", JSON.stringify(payload, null, 2));
 
   try {
-    const response = await callAzureOpenAI(promptTemplate.model!, payload);
+    const response = await callAzureOpenAI(payload);
     // Expecting the response in choices[0].message.content
     const content = response?.choices?.[0]?.message?.content;
     if (!content) throw new Error("No content returned from OpenAI.");
