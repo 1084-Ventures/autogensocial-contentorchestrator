@@ -39,12 +39,12 @@ jobs:
 
       - name: Validate Azure Functions
         run: |
-          npm install -g azure-functions-core-tools@4
-          func validate || echo "func validate failed"
+          npm run build
 
       - name: List Functions Locally (for troubleshooting)
         run: |
-          func azure functionapp list-functions func-autogensocial-contentorchestrator || echo "list-functions failed"
+          echo "Local function files:"
+          ls -l ./src/functions || echo "src/functions not found"
 
       - name: Print host.json
         run: cat ./host.json || echo "host.json not found"
@@ -72,9 +72,14 @@ jobs:
         with:
           name: node-app
 
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
       - name: Unzip artifact for deployment
         run: unzip release.zip
-      
+
       - name: 'Run Azure Functions Action'
         uses: Azure/functions-action@v1
         id: fa
@@ -87,11 +92,9 @@ jobs:
 
       - name: List Functions in Cloud (after deployment)
         run: |
-          npm install -g azure-functions-core-tools@4
-          func azure functionapp list-functions func-autogensocial-contentorchestrator || echo "list-functions failed"
+          az functionapp function list --name func-autogensocial-contentorchestrator --resource-group rg-autogensocial || echo "az functionapp function list failed"
 
       - name: Tail Azure Function Logs
         run: |
-          az extension add -n azure-functions
           az functionapp log tail --name func-autogensocial-contentorchestrator --resource-group rg-autogensocial --output json || echo "log tail failed"
         
