@@ -37,6 +37,22 @@ jobs:
           npm run test --if-present
           popd
 
+      - name: Validate Azure Functions
+        run: |
+          npm install -g azure-functions-core-tools@4
+          func validate || echo "func validate failed"
+
+      - name: List Functions Locally (for troubleshooting)
+        run: |
+          func azure functionapp list-functions func-autogensocial-contentorchestrator || echo "list-functions failed"
+
+      - name: Print host.json
+        run: cat ./host.json || echo "host.json not found"
+
+      - name: List Function Files
+        run: |
+          ls -l ./src/functions || echo "src/functions not found"
+
       - name: Zip artifact for deployment
         run: zip release.zip ./* -r
 
@@ -68,4 +84,14 @@ jobs:
           package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_F5F98A5D8CD44D109BF57263A055AD3D }}
           sku: 'flexconsumption'
+
+      - name: List Functions in Cloud (after deployment)
+        run: |
+          npm install -g azure-functions-core-tools@4
+          func azure functionapp list-functions func-autogensocial-contentorchestrator || echo "list-functions failed"
+
+      - name: Tail Azure Function Logs
+        run: |
+          az extension add -n azure-functions
+          az functionapp log tail --name func-autogensocial-contentorchestrator --resource-group rg-autogensocial --output json || echo "log tail failed"
         
