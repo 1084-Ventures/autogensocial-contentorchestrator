@@ -101,3 +101,6 @@ AzuriteConfig
 
 # Apple
 .DS_Store
+
+# VS Code Settings
+.vscode/
