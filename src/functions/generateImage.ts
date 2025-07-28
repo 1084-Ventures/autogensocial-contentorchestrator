@@ -2,6 +2,7 @@ import { createCanvas, loadImage, CanvasRenderingContext2D, Image, registerFont 
 import { downloadBlobToBuffer } from '../shared/blobClient';
 import * as fs from 'fs';
 import * as path from 'path';
+import { BlobServiceClient } from '@azure/storage-blob';
 import { components } from '../../generated/models';
 import { findRelevantMedia } from '../shared/findRelevantMedia';
 import { fonts as fontList } from '../shared/fonts';
@@ -37,45 +38,64 @@ function getDimensions(aspectRatio?: AspectRatio) {
   return ASPECT_RATIOS.square;
 }
 
-function getFontString(textStyle?: TextStyle) {
+async function downloadFontBlobToFile(blobUrl: string, destPath: string): Promise<void> {
+  try {
+    // Parse blob URL
+    const match = blobUrl.match(/^https:\/\/([^.]+)\.blob\.core\.windows\.net\/([^\/]+)\/(.+)$/);
+    if (!match) throw new Error('Invalid blob URL format');
+    const account = match[1];
+    const container = match[2];
+    const blobName = match[3];
+    // Use connection string from environment
+    const connectionString = process.env.FONT_BLOB_CONNECTION_STRING;
+    if (!connectionString) throw new Error('FONT_BLOB_CONNECTION_STRING env var is required');
+    const blobServiceClient = BlobServiceClient.fromConnectionString(connectionString);
+    const containerClient = blobServiceClient.getContainerClient(container);
+    const blockBlobClient = containerClient.getBlockBlobClient(blobName);
+    const downloadResponse = await blockBlobClient.download();
+    const writable = fs.createWriteStream(destPath);
+    await new Promise((resolve, reject) => {
+      downloadResponse.readableStreamBody
+        ?.pipe(writable)
+        .on('finish', () => resolve(undefined))
+        .on('error', reject);
+    });
+  } catch (err) {
+    throw new Error(`Azure SDK font download failed: ${err.message}`);
+  }
+}
+
+async function getFontString(textStyle?: TextStyle): Promise<string> {
   let size = textStyle?.font?.size || '48px';
   if (typeof size === 'number') size = `${size}px`;
   const weight = textStyle?.font?.weight || 'normal';
   const style = textStyle?.font?.style || 'normal';
   let family = textStyle?.font?.family || 'Arial';
   let fontPath: string | undefined = undefined;
-  // Normalize font family for lookup and registration
   const normalizedFamily = family.trim().toLowerCase();
   console.log(`[generateImage] Normalized font family for lookup: '${normalizedFamily}'`);
   console.log('[generateImage] Comparing against fontList:', fontList.map(f => f.name.trim().toLowerCase()));
   if (family && normalizedFamily !== 'arial' && !registeredFonts.has(normalizedFamily)) {
-    // Match font family to fonts.json name field, case-insensitive, trimmed
     const fontEntry = fontList.find(f => f.name.trim().toLowerCase() === normalizedFamily);
     if (fontEntry) {
       try {
-        // registerFont requires a local file path, not a remote URL
         if (fontEntry.blobUrl.startsWith('http')) {
           const os = require('os');
           const tempDir = os.tmpdir();
           fontPath = path.join(tempDir, `${family.replace(/\s+/g, '')}.ttf`);
           if (!fs.existsSync(fontPath)) {
-            console.log(`[generateImage] Downloading font '${family}' from ${fontEntry.blobUrl} to ${fontPath}`);
-            try {
-              require('child_process').execSync(`curl -L '${fontEntry.blobUrl}' -o '${fontPath}'`);
-              const stats = fs.statSync(fontPath);
-              console.log(`[generateImage] Downloaded font file size: ${stats.size} bytes`);
-            } catch (downloadErr) {
-              console.error(`[generateImage] Error downloading font '${family}':`, downloadErr);
-            }
-          } else {
-            console.log(`[generateImage] Font '${family}' already downloaded at ${fontPath}`);
+            console.log(`[generateImage] Downloading font '${family}' from ${fontEntry.blobUrl} to ${fontPath} using Azure SDK`);
+            await downloadFontBlobToFile(fontEntry.blobUrl, fontPath);
             const stats = fs.statSync(fontPath);
-            console.log(`[generateImage] Existing font file size: ${stats.size} bytes`);
+            console.log(`[generateImage] Downloaded font file size: ${stats.size} bytes`);
+            if (stats.size < 10000) throw new Error('Downloaded font file is too small');
+          } else {
+            const stats = fs.statSync(fontPath);
+            console.log(`[generateImage] Font '${family}' already downloaded at ${fontPath}, size: ${stats.size} bytes`);
           }
         } else {
           fontPath = fontEntry.blobUrl;
         }
-        // registerFont only works with local file paths
         if (fs.existsSync(fontPath)) {
           try {
             registerFont(fontPath, { family });
@@ -83,9 +103,11 @@ function getFontString(textStyle?: TextStyle) {
             console.log(`[generateImage] Registered font '${family}' from path: ${fontPath}`);
           } catch (regErr) {
             console.error(`[generateImage] Failed to register font ${family}:`, regErr);
+            family = 'Arial';
           }
         } else {
           console.error(`[generateImage] Font file for '${family}' does not exist at ${fontPath}, cannot register.`);
+          family = 'Arial';
         }
       } catch (err) {
         console.error(`[generateImage] Unexpected error during font registration for ${family}:`, err);
@@ -257,7 +279,7 @@ export async function generateImage({ imageTemplate, quote, blobConnectionString
   // Overlay box (optional, now sized to text with margin and alignment)
   const overlay = selectedTheme?.overlayBox;
   const textStyle = selectedTheme?.textStyle;
-  const fontString = getFontString(textStyle);
+  const fontString = await getFontString(textStyle);
   ctx.font = fontString;
   ctx.textAlign = textStyle?.alignment || 'center';
   ctx.textBaseline = 'middle';
@@ -344,7 +366,7 @@ export async function generateImage({ imageTemplate, quote, blobConnectionString
   }
 
   // Text styling (reuse variables above)
-  ctx.font = getFontString(textStyle);
+  ctx.font = await getFontString(textStyle);
   ctx.fillStyle = textStyle?.font?.color || '#fff';
   ctx.textAlign = blockAlign;
   ctx.textBaseline = 'middle';
