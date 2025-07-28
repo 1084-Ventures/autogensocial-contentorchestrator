@@ -21,6 +21,6 @@ export const fonts = [
   },
   {
     name: "Roboto",
-    blobUrl: "https://github.com/google/fonts/blob/main/apache/roboto/Roboto-Regular.ttf"
+    blobUrl: "https://fonts.gstatic.com/s/roboto/v30/KFOmCnqEu92Fr1Mu4mxM.ttf"
   }
 ];
