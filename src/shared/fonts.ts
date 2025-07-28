@@ -1,26 +1,26 @@
 export const fonts = [
   {
     name: "Comic Neue",
-    blobUrl: "https://fonts.gstatic.com/s/comicneue/v3/4UaHrEJDsxBrF37olUeD_w.ttf"
+    blobUrl: "https://storautogensocial.blob.core.windows.net/fonts/ComicNeue-Regular.ttf"
   },
   {
     name: "Lato",
-    blobUrl: "https://fonts.gstatic.com/s/lato/v24/S6uyw4BMUTPHjxAwXiWtFCc.ttf"
+    blobUrl: "https://storautogensocial.blob.core.windows.net/fonts/Lato-Regular.ttf"
   },
   {
     name: "Montserrat",
-    blobUrl: "https://fonts.gstatic.com/s/montserrat/v24/JTUQjIg1_i6t8kCHKm45_Q.ttf"
+    blobUrl: "https://storautogensocial.blob.core.windows.net/fonts/Montserrat-Regular.ttf"
   },
   {
     name: "Open Sans",
-    blobUrl: "https://fonts.gstatic.com/s/opensans/v29/mem8YaGs126MiZpBA-UFVZ0e.ttf"
+    blobUrl: "https://storautogensocial.blob.core.windows.net/fonts/OpenSans-Regular.ttf"
   },
   {
     name: "Pacifico",
-    blobUrl: "https://fonts.gstatic.com/s/pacifico/v22/FwZY7-Qmy14u9lezJ-6H6Mm.ttf"
+    blobUrl: "https://storautogensocial.blob.core.windows.net/fonts/Pacifico-Regular.ttf"
   },
   {
     name: "Roboto",
-    blobUrl: "https://fonts.gstatic.com/s/roboto/v30/KFOmCnqEu92Fr1Mu4mxM.ttf"
+    blobUrl: "https://storautogensocial.blob.core.windows.net/fonts/Roboto-Regular.ttf"
   }
 ];
