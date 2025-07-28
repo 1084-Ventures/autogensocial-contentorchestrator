@@ -1,5 +1,7 @@
-import { createCanvas, loadImage, CanvasRenderingContext2D, Image } from 'canvas';
+import { createCanvas, loadImage, CanvasRenderingContext2D, Image, registerFont } from 'canvas';
 import { downloadBlobToBuffer } from '../shared/blobClient';
+import * as fs from 'fs';
+import * as path from 'path';
 import { components } from '../../generated/models';
 import { findRelevantMedia } from '../shared/findRelevantMedia';
 
@@ -7,6 +9,17 @@ type ImageTemplate = components["schemas"]["ImageTemplate"];
 type VisualStyle = components["schemas"]["VisualStyle"];
 type TextStyle = components["schemas"]["TextStyle"];
 type AspectRatio = components["schemas"]["AspectRatio"];
+
+// Load fonts.json once at module level
+const FONTS_JSON_PATH = path.resolve(__dirname, '../../../specs/resources/fonts.json');
+let fontList: { name: string; blobUrl: string }[] = [];
+try {
+  fontList = JSON.parse(fs.readFileSync(FONTS_JSON_PATH, 'utf8'));
+} catch (e) {
+  fontList = [];
+}
+
+const registeredFonts = new Set<string>();
 
 interface GenerateImageOptions {
   imageTemplate: ImageTemplate;
@@ -33,7 +46,35 @@ function getFontString(textStyle?: TextStyle) {
   if (typeof size === 'number') size = `${size}px`;
   const weight = textStyle?.font?.weight || 'normal';
   const style = textStyle?.font?.style || 'normal';
-  const family = textStyle?.font?.family || 'Arial';
+  let family = textStyle?.font?.family || 'Arial';
+  // Register font if found in fonts.json and not already registered
+  if (family && family !== 'Arial' && !registeredFonts.has(family)) {
+    const fontEntry = fontList.find(f => f.name.toLowerCase() === family.toLowerCase());
+    if (fontEntry) {
+      try {
+        // Download font file to temp if it's a blob URL
+        let fontPath: string;
+        if (fontEntry.blobUrl.startsWith('http')) {
+          const os = require('os');
+          const tempDir = os.tmpdir();
+          fontPath = path.join(tempDir, `${family.replace(/\s+/g, '')}.ttf`);
+          if (!fs.existsSync(fontPath)) {
+            const https = require('https');
+            const file = fs.createWriteStream(fontPath);
+            // Download font synchronously before registering
+            require('child_process').execSync(`curl -L '${fontEntry.blobUrl}' -o '${fontPath}'`);
+          }
+        } else {
+          fontPath = fontEntry.blobUrl;
+        }
+        registerFont(fontPath, { family });
+        registeredFonts.add(family);
+      } catch (err) {
+        console.error(`[generateImage] Failed to register font ${family}:`, err);
+        family = 'Arial';
+      }
+    }
+  }
   return `${style} ${weight} ${size} ${family}`;
 }
 
