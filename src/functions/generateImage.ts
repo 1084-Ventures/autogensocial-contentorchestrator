@@ -48,10 +48,10 @@ function getFontString(textStyle?: TextStyle) {
   const style = textStyle?.font?.style || 'normal';
   let family = textStyle?.font?.family || 'Arial';
   let fontPath: string | undefined = undefined;
-  // Register font if found in fonts.json and not already registered
-  if (family && family !== 'Arial' && !registeredFonts.has(family)) {
+  // Normalize font family for lookup and registration
+  const normalizedFamily = family.trim().toLowerCase();
+  if (family && normalizedFamily !== 'arial' && !registeredFonts.has(normalizedFamily)) {
     // Match font family to fonts.json name field, case-insensitive, trimmed
-    const normalizedFamily = family.trim().toLowerCase();
     const fontEntry = fontList.find(f => f.name.trim().toLowerCase() === normalizedFamily);
     if (fontEntry) {
       try {
@@ -70,7 +70,7 @@ function getFontString(textStyle?: TextStyle) {
           fontPath = fontEntry.blobUrl;
         }
         registerFont(fontPath, { family });
-        registeredFonts.add(family);
+        registeredFonts.add(normalizedFamily);
         console.log(`[generateImage] Registered font '${family}' from path: ${fontPath}`);
       } catch (err) {
         console.error(`[generateImage] Failed to register font ${family}:`, err);
