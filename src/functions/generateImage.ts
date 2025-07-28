@@ -47,35 +47,41 @@ function getFontString(textStyle?: TextStyle) {
   const weight = textStyle?.font?.weight || 'normal';
   const style = textStyle?.font?.style || 'normal';
   let family = textStyle?.font?.family || 'Arial';
+  let fontPath: string | undefined = undefined;
   // Register font if found in fonts.json and not already registered
   if (family && family !== 'Arial' && !registeredFonts.has(family)) {
     const fontEntry = fontList.find(f => f.name.toLowerCase() === family.toLowerCase());
     if (fontEntry) {
       try {
         // Download font file to temp if it's a blob URL
-        let fontPath: string;
         if (fontEntry.blobUrl.startsWith('http')) {
           const os = require('os');
           const tempDir = os.tmpdir();
           fontPath = path.join(tempDir, `${family.replace(/\s+/g, '')}.ttf`);
           if (!fs.existsSync(fontPath)) {
-            const https = require('https');
-            const file = fs.createWriteStream(fontPath);
-            // Download font synchronously before registering
+            console.log(`[generateImage] Downloading font '${family}' from ${fontEntry.blobUrl} to ${fontPath}`);
             require('child_process').execSync(`curl -L '${fontEntry.blobUrl}' -o '${fontPath}'`);
+          } else {
+            console.log(`[generateImage] Font '${family}' already downloaded at ${fontPath}`);
           }
         } else {
           fontPath = fontEntry.blobUrl;
         }
         registerFont(fontPath, { family });
         registeredFonts.add(family);
+        console.log(`[generateImage] Registered font '${family}' from path: ${fontPath}`);
       } catch (err) {
         console.error(`[generateImage] Failed to register font ${family}:`, err);
         family = 'Arial';
       }
+    } else {
+      console.warn(`[generateImage] Font family '${family}' not found in fonts.json, using Arial.`);
+      family = 'Arial';
     }
   }
-  return `${style} ${weight} ${size} ${family}`;
+  const fontString = `${style} ${weight} ${size} ${family}`;
+  console.log(`[generateImage] Using font string: '${fontString}'`);
+  return fontString;
 }
 
 function wrapText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxWidth: number, lineHeight: number) {
@@ -234,10 +240,12 @@ export async function generateImage({ imageTemplate, quote, blobConnectionString
   // Overlay box (optional, now sized to text with margin and alignment)
   const overlay = selectedTheme?.overlayBox;
   const textStyle = selectedTheme?.textStyle;
-  ctx.font = getFontString(textStyle);
+  const fontString = getFontString(textStyle);
+  ctx.font = fontString;
   ctx.textAlign = textStyle?.alignment || 'center';
   ctx.textBaseline = 'middle';
   ctx.globalAlpha = 1.0;
+  console.log(`[generateImage] Canvas font set to: '${ctx.font}', textAlign: '${ctx.textAlign}', textBaseline: '${ctx.textBaseline}'`);
 
   // Margins
   const marginX = width * 0.05;
@@ -341,6 +349,7 @@ export async function generateImage({ imageTemplate, quote, blobConnectionString
   ctx.fillStyle = textStyle?.font?.color || '#fff';
   // Draw each line
   lines.forEach((l, i) => {
+    console.log(`[generateImage] Drawing text line: '${l}' at x=${xBlock}, y=${yStart + i * lineHeight}, color=${ctx.fillStyle}`);
     ctx.fillText(l, xBlock, yStart + i * lineHeight);
   });
   ctx.restore();
