@@ -47,8 +47,8 @@ async function downloadFontBlobToFile(blobUrl: string, destPath: string): Promis
     const container = match[2];
     const blobName = match[3];
     // Use connection string from environment
-    const connectionString = process.env.FONT_BLOB_CONNECTION_STRING;
-    if (!connectionString) throw new Error('FONT_BLOB_CONNECTION_STRING env var is required');
+    const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
+    if (!connectionString) throw new Error('AZURE_STORAGE_CONNECTION_STRING env var is required');
     const blobServiceClient = BlobServiceClient.fromConnectionString(connectionString);
     const containerClient = blobServiceClient.getContainerClient(container);
     const blockBlobClient = containerClient.getBlockBlobClient(blobName);
