@@ -21,6 +21,6 @@ export const fonts = [
   },
   {
     name: "Roboto",
-    blobUrl: "https://storautogensocial.blob.core.windows.net/fonts/Roboto-Regular.ttf"
+    blobUrl: "https://github.com/google/fonts/blob/main/apache/roboto/Roboto-Regular.ttf"
   }
 ];
