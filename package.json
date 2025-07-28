@@ -6,7 +6,6 @@
     "build": "tsc",
     "watch": "tsc -w",
     "clean": "rimraf dist",
-    "prebuild": "npm run copy:fonts && npm run generate:models",
     "prestart": "npm run clean && npm run build",
     "start": "func start --port 7072 --verbose",
     "generate:models": "openapi-typescript '../specs/openapi-bundled.json' --output ./generated/models.ts",
