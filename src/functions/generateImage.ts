@@ -4,32 +4,16 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { components } from '../../generated/models';
 import { findRelevantMedia } from '../shared/findRelevantMedia';
+import { fonts as fontList } from '../shared/fonts';
 
 type ImageTemplate = components["schemas"]["ImageTemplate"];
 type VisualStyle = components["schemas"]["VisualStyle"];
 type TextStyle = components["schemas"]["TextStyle"];
 type AspectRatio = components["schemas"]["AspectRatio"];
 
-// Load fonts.json once at module level
-const FONTS_JSON_PATH = path.resolve(__dirname, '../shared/fonts.json');
-console.log('[generateImage] FONTS_JSON_PATH:', FONTS_JSON_PATH);
-let fontList: { name: string; blobUrl: string }[] = [];
-try {
-  const exists = fs.existsSync(FONTS_JSON_PATH);
-  console.log(`[generateImage] fonts.json exists: ${exists}`);
-  if (exists) {
-    const raw = fs.readFileSync(FONTS_JSON_PATH, 'utf8');
-    console.log('[generateImage] fonts.json raw contents:', raw);
-    fontList = JSON.parse(raw);
-    console.log('[generateImage] Loaded fonts.json:', fontList.map(f => f.name));
-  } else {
-    console.error('[generateImage] fonts.json file does not exist at path:', FONTS_JSON_PATH);
-    fontList = [];
-  }
-} catch (e) {
-  console.error('[generateImage] Failed to load or parse fonts.json:', e);
-  fontList = [];
-}
+
+// fontList is now imported from fonts.ts
+console.log('[generateImage] Loaded fonts.ts:', fontList.map(f => f.name));
 
 const registeredFonts = new Set<string>();
 
