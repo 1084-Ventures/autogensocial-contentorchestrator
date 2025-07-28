@@ -50,7 +50,9 @@ function getFontString(textStyle?: TextStyle) {
   let fontPath: string | undefined = undefined;
   // Register font if found in fonts.json and not already registered
   if (family && family !== 'Arial' && !registeredFonts.has(family)) {
-    const fontEntry = fontList.find(f => f.name.toLowerCase() === family.toLowerCase());
+    // Match font family to fonts.json name field, case-insensitive, trimmed
+    const normalizedFamily = family.trim().toLowerCase();
+    const fontEntry = fontList.find(f => f.name.trim().toLowerCase() === normalizedFamily);
     if (fontEntry) {
       try {
         // Download font file to temp if it's a blob URL
