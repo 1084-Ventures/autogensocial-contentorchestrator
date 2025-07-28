@@ -12,6 +12,7 @@ type AspectRatio = components["schemas"]["AspectRatio"];
 
 // Load fonts.json once at module level
 const FONTS_JSON_PATH = path.resolve(__dirname, '../../../specs/resources/fonts.json');
+console.log('[generateImage] FONTS_JSON_PATH:', FONTS_JSON_PATH);
 let fontList: { name: string; blobUrl: string }[] = [];
 try {
   fontList = JSON.parse(fs.readFileSync(FONTS_JSON_PATH, 'utf8'));
