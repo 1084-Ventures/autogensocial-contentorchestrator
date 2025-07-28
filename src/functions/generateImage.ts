@@ -15,10 +15,19 @@ const FONTS_JSON_PATH = path.resolve(__dirname, '../../resources/fonts.json');
 console.log('[generateImage] FONTS_JSON_PATH:', FONTS_JSON_PATH);
 let fontList: { name: string; blobUrl: string }[] = [];
 try {
-  fontList = JSON.parse(fs.readFileSync(FONTS_JSON_PATH, 'utf8'));
-  console.log('[generateImage] Loaded fonts.json:', fontList.map(f => f.name));
+  const exists = fs.existsSync(FONTS_JSON_PATH);
+  console.log(`[generateImage] fonts.json exists: ${exists}`);
+  if (exists) {
+    const raw = fs.readFileSync(FONTS_JSON_PATH, 'utf8');
+    console.log('[generateImage] fonts.json raw contents:', raw);
+    fontList = JSON.parse(raw);
+    console.log('[generateImage] Loaded fonts.json:', fontList.map(f => f.name));
+  } else {
+    console.error('[generateImage] fonts.json file does not exist at path:', FONTS_JSON_PATH);
+    fontList = [];
+  }
 } catch (e) {
-  console.error('[generateImage] Failed to load fonts.json:', e);
+  console.error('[generateImage] Failed to load or parse fonts.json:', e);
   fontList = [];
 }
 
