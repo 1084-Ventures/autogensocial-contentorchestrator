@@ -11,7 +11,7 @@ type TextStyle = components["schemas"]["TextStyle"];
 type AspectRatio = components["schemas"]["AspectRatio"];
 
 // Load fonts.json once at module level
-const FONTS_JSON_PATH = path.resolve(__dirname, '../../resources/fonts.json');
+const FONTS_JSON_PATH = path.resolve(__dirname, '../shared/fonts.json');
 console.log('[generateImage] FONTS_JSON_PATH:', FONTS_JSON_PATH);
 let fontList: { name: string; blobUrl: string }[] = [];
 try {

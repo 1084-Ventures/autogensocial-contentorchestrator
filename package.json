@@ -9,7 +9,7 @@
     "prestart": "npm run clean && npm run build",
     "start": "func start --port 7072 --verbose",
     "generate:models": "openapi-typescript '../specs/openapi-bundled.json' --output ./generated/models.ts",
-    "copy:fonts": "cp ../specs/resources/fonts.json ./resources/fonts.json",
+    "copy:fonts": "cp ../specs/resources/fonts.json ./src/shared/fonts.json",
     "test": "echo \"No tests yet...\""
   },
   "dependencies": {
