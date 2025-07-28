@@ -53,25 +53,42 @@ function getFontString(textStyle?: TextStyle) {
     const fontEntry = fontList.find(f => f.name.trim().toLowerCase() === normalizedFamily);
     if (fontEntry) {
       try {
-        // Download font file to temp if it's a blob URL
+        // registerFont requires a local file path, not a remote URL
         if (fontEntry.blobUrl.startsWith('http')) {
           const os = require('os');
           const tempDir = os.tmpdir();
           fontPath = path.join(tempDir, `${family.replace(/\s+/g, '')}.ttf`);
           if (!fs.existsSync(fontPath)) {
             console.log(`[generateImage] Downloading font '${family}' from ${fontEntry.blobUrl} to ${fontPath}`);
-            require('child_process').execSync(`curl -L '${fontEntry.blobUrl}' -o '${fontPath}'`);
+            try {
+              require('child_process').execSync(`curl -L '${fontEntry.blobUrl}' -o '${fontPath}'`);
+              const stats = fs.statSync(fontPath);
+              console.log(`[generateImage] Downloaded font file size: ${stats.size} bytes`);
+            } catch (downloadErr) {
+              console.error(`[generateImage] Error downloading font '${family}':`, downloadErr);
+            }
           } else {
             console.log(`[generateImage] Font '${family}' already downloaded at ${fontPath}`);
+            const stats = fs.statSync(fontPath);
+            console.log(`[generateImage] Existing font file size: ${stats.size} bytes`);
           }
         } else {
           fontPath = fontEntry.blobUrl;
         }
-        registerFont(fontPath, { family });
-        registeredFonts.add(normalizedFamily);
-        console.log(`[generateImage] Registered font '${family}' from path: ${fontPath}`);
+        // registerFont only works with local file paths
+        if (fs.existsSync(fontPath)) {
+          try {
+            registerFont(fontPath, { family });
+            registeredFonts.add(normalizedFamily);
+            console.log(`[generateImage] Registered font '${family}' from path: ${fontPath}`);
+          } catch (regErr) {
+            console.error(`[generateImage] Failed to register font ${family}:`, regErr);
+          }
+        } else {
+          console.error(`[generateImage] Font file for '${family}' does not exist at ${fontPath}, cannot register.`);
+        }
       } catch (err) {
-        console.error(`[generateImage] Failed to register font ${family}:`, err);
+        console.error(`[generateImage] Unexpected error during font registration for ${family}:`, err);
         family = 'Arial';
       }
     } else {
