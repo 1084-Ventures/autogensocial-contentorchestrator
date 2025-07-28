@@ -15,7 +15,9 @@ const FONTS_JSON_PATH = path.resolve(__dirname, '../../../specs/resources/fonts.
 let fontList: { name: string; blobUrl: string }[] = [];
 try {
   fontList = JSON.parse(fs.readFileSync(FONTS_JSON_PATH, 'utf8'));
+  console.log('[generateImage] Loaded fonts.json:', fontList.map(f => f.name));
 } catch (e) {
+  console.error('[generateImage] Failed to load fonts.json:', e);
   fontList = [];
 }
 
@@ -50,6 +52,8 @@ function getFontString(textStyle?: TextStyle) {
   let fontPath: string | undefined = undefined;
   // Normalize font family for lookup and registration
   const normalizedFamily = family.trim().toLowerCase();
+  console.log(`[generateImage] Normalized font family for lookup: '${normalizedFamily}'`);
+  console.log('[generateImage] Comparing against fontList:', fontList.map(f => f.name.trim().toLowerCase()));
   if (family && normalizedFamily !== 'arial' && !registeredFonts.has(normalizedFamily)) {
     // Match font family to fonts.json name field, case-insensitive, trimmed
     const fontEntry = fontList.find(f => f.name.trim().toLowerCase() === normalizedFamily);
