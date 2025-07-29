@@ -41,12 +41,15 @@ export async function checkSchedules(myTimer: Timer, context: InvocationContext)
 
       if (isScheduledDay && isScheduledTime && !alreadyExecuted) {
         context.log(`    Triggering orchestration for template ${template.id}`);
-        // Call orchestrateContent via HTTP POST using API_BASE_URL
+        // Call orchestrateContent via HTTP POST using API_BASE_URL and function key
         const apiBaseUrl = process.env.API_BASE_URL;
+        const functionKey = process.env.ORCHESTRATE_FUNCTION_KEY;
         if (!apiBaseUrl) {
           context.log("ERROR: API_BASE_URL environment variable is not set.");
+        } else if (!functionKey) {
+          context.log("ERROR: ORCHESTRATE_FUNCTION_KEY environment variable is not set.");
         } else {
-          const orchestrateUrl = `${apiBaseUrl}/orchestrate-content`;
+          const orchestrateUrl = `${apiBaseUrl}/orchestrate-content?code=${functionKey}`;
           context.log(`    Calling orchestrateContent at ${orchestrateUrl} for brandId=${template.brandId}, templateId=${template.id}`);
           try {
             const response = await fetch(orchestrateUrl, {
